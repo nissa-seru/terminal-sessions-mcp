@@ -193,7 +193,7 @@ test('listSessions has 1.x’s fields; killSession and killAll forget sessions, 
   assert.equal(killed.success, true);
   assert.ok(!((await call('listSessions', {})) as unknown as Array<{ id: string }>).some((s) => s.id === 'ls-1'), 'a killed session is gone from the list');
   const again = await call('killSession', { session: 'ls-1' });
-  assert.equal(again.success, false, 'a second kill finds no session');
+  assert.equal(again.success, true, 'as in 1.x, killing a session that is gone succeeds, so a second kill or a cleanup after another caller is no failure');
   await call('runCommand', { session: 'ls-3', command: 'sleep 30', timeout: -1 });
   const began = Date.now();
   const all = await call('killAll', {});
