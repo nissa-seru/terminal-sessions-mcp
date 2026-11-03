@@ -715,7 +715,7 @@ test('1cabc6a 5: a tail of one line longer than the old input cap keeps the whol
   assert.deepEqual(cut.lines, { requested: 1, returned: 1, cutHead: true, begunBefore: true, before: { until: cut.seq[0] - 1 }, head: { since: cut.seq[0] - 1 } });
 });
 
-test('1cabc6a 6: a control string longer than any lookback (an OSC 52 clipboard) never leaks its payload into a page, whatever the page size', async () => {
+test('1cabc6a 6: a control string longer than any lookback (an OSC 52 clipboard) that ends within OPEN_SEQUENCE_BYTES past the page never leaks its payload into a page, whatever the page size', async () => {
   const osc = (n: number) => `\x1b]52;c;${'Q'.repeat(n)}\x07`;
   for (const [payload, maxBytes, chunk] of [
     [20_000, 16384, 1024],
