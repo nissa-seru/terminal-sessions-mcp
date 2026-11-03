@@ -591,7 +591,7 @@ export const TOOLS: ToolDef[] = [
     description:
       "Read a session's history as text (default) or as journal events. `since: N` pages forward from a cursor — the " +
       'result says `more` and gives the next cursor, so nothing is read twice or skipped. `runId` pages through one ' +
-      "command's full output the same way. `tail: N` gives the last N lines (also of one Run with `runId`; with `as: events`, the last N events); for what came before, pass its " +
+      "command's full output the same way. `tail: N` gives the last N lines (also of one Run with `runId`; with `as: events`, the last N events, at most 2,000); for what came before, pass its " +
       '`lines.before.until` as `until`, and its `lines.before.untilOffset`, when given, as `untilOffset`, with the same tail. Every result carries `nextCursor`; ' +
       'when a page ends inside a large output event it also carries `nextOffset` — pass both back (`since`, `offset`). ' +
       'Use `screen` for what the terminal shows right now; use `search` to find a pattern in history.',
@@ -603,7 +603,7 @@ export const TOOLS: ToolDef[] = [
         offset: { type: 'integer', minimum: 0, description: 'With since: continue inside the event after since (a result’s nextOffset).' },
         until: { type: 'integer', minimum: 0, description: 'Stop at this cursor (inclusive).' },
         untilOffset: { type: 'integer', minimum: 0, description: 'With tail and until: stop inside the event at until, after this many of its bytes (a tail result’s lines.before.untilOffset).' },
-        tail: { type: 'integer', minimum: 1, maximum: 10000, description: 'The last N lines: of output, or the note a hole leaves; the [terminal] and [run …] lines naming sources come extra. With as: events, the last N events.' },
+        tail: { type: 'integer', minimum: 1, maximum: 10000, description: 'The last N lines: of output, or the note a hole leaves; the [terminal] and [run …] lines naming sources come extra. With as: events, the last N events, at most 2,000.' },
         runId: { type: 'string', description: "One Run's output, paged from its start (combine with since)." },
         as: { type: 'string', enum: ['text', 'events'] },
         maxBytes: { type: 'integer', minimum: 1024, maximum: 1048576, description: 'Page size in bytes (default 16384).' },
