@@ -1045,7 +1045,7 @@ it. Tests exercise it directly. Tool names below are the MCP projection.
 | `input` | `text` and/or `keys`, sent exactly as given with nothing appended; `sensitive` flag; requires the controller seat | `{seq}` |
 | `signal` | `SIGINT`/`SIGTSTP`/`SIGQUIT` typed as control characters; other signals to the foreground process group, never the shell | |
 | `control` | `take` \| `release` \| `status` | `{controller}` |
-| `read` | `since` pages forward head first, `runId` pages one Run's output, `tail` gives the last N lines; `until`, `as: text\|events`, `maxBytes`, `limit` | `{text\|events, seq: [from, to], nextCursor, more, gap?, truncated, oldestSeq}` |
+| `read` | `since` (and `offset`, inside an event) pages forward head first, `runId` pages one Run's output, `tail` gives the last N lines; `until`, `as: text\|events`, `maxBytes`, `limit` | `{text\|events, seq: [from, to], nextCursor, nextOffset?, more, gap?, truncated, oldestSeq}` |
 | `screen` | the terminal's current screen | `{cols, rows, alt, cursor, lines, title, seq}` |
 | `search` | regex over output lines with `seq` anchors and context; without `since`, a bounded recent window it reports | `{matches, scanned, more, bounded}` |
 | `watch` / `unwatch` / `watches` | a standing `pattern`, `silenceMs` or `idle` predicate (§4); fires as a lifecycle message to its owner | `{watchId, kind, label, …}` |
