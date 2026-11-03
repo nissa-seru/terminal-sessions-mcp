@@ -179,15 +179,18 @@ test('G16: a replay after the session was forgotten returns the first outcome (a
   assert.equal(again.isError, undefined, again.text);
   assert.equal(again.structured?.replayed, true);
   assert.equal(again.structured?.runId, first.structured?.runId);
+  const w = await tool('watch', { session: 'idem1', pattern: 'zz-unwatched' });
   for (const [name, args] of [
     ['control', { session: 'idem1', action: 'take' }],
     ['session_env_capture', { session: 'idem1' }],
+    ['unwatch', { session: 'idem1', watchId: w.structured?.watchId }],
   ] as const) {
     const key = `${name}-${Date.now()}`;
     const r1 = await tool(name, { ...args, idempotencyKey: key });
     assert.equal(r1.isError, undefined, r1.text);
     const r2 = await tool(name, { ...args, idempotencyKey: key });
     assert.equal(r2.structured?.replayed, true, name);
+    if (name === 'unwatch') assert.equal(r2.structured?.removed, true, 'the replay is the first removal, not a second try at it');
   }
 });
 
