@@ -9,6 +9,7 @@ import { MemoryStore } from '../src/core/stores.js';
 import type { JournalEvent } from '../src/core/types.js';
 import { clocks } from '../src/core/clock.js';
 import { WatchManager, type WaitResult, type WatchHost } from '../src/core/watches.js';
+import { until } from './testhost.js';
 
 // ───────────── the house's read of 3eade8a (#22): watches ─────────────
 
@@ -914,6 +915,24 @@ test('a pattern hit says where its line began, as a search match does, and the e
     const prompt = f.out('Password: ', 'p', 'stdout').seq;
     const quiet = await f.manager.waitFor({ pattern: '^Password:' }, 2000, own);
     assert.deepEqual([quiet.matched, quiet.cursor], [true, prompt - 1]);
+  } finally {
+    f.close();
+  }
+});
+
+test('a session silence watch stands down at the shell\'s exit, and its quiet is timed again from the next output', async () => {
+  const f = bare();
+  try {
+    f.out('x\n');
+    const sw = f.manager.add({ silenceMs: 400, once: true }, A);
+    f.journal.append({ type: 'session.exit', code: 0 });
+    await sleep(600);
+    assert.equal(f.firings(sw.watchId).length, 0, 'no firing about the ended shell');
+    assert.ok(f.manager.list().some((w) => w.watchId === sw.watchId), 'the once-only watch is kept for the next life');
+    const t0 = performance.now();
+    f.out('$ ');
+    await until(() => f.firings(sw.watchId).length === 1, 3000);
+    assert.ok(performance.now() - t0 >= 380, `timed from the next output: ${(performance.now() - t0).toFixed(0)} ms`);
   } finally {
     f.close();
   }

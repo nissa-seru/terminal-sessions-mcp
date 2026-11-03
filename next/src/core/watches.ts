@@ -280,6 +280,9 @@ class Predicate {
           const quiet = this.armed ? ` no output for ${this.quietMs()}ms` : ' no output';
           this.fire({ match: `${endText(ev)};${quiet}`, seq: ev.seq });
           this.onRunEnd?.(ev);
+        } else if (ev.type === 'session.exit' && this.spec.runId === undefined && this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
+          this.silenceTimer = undefined;
         }
         return;
       case 'idle':
