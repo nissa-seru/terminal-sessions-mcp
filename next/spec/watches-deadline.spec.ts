@@ -9,6 +9,7 @@ import { MemoryStore } from '../src/core/stores.js';
 import type { JournalEvent } from '../src/core/types.js';
 import { clocks } from '../src/core/clock.js';
 import { WatchManager, type WaitResult, type WatchHost } from '../src/core/watches.js';
+import { until } from './testhost.js';
 
 // ───────────── the house's read of 3eade8a (#22): watches ─────────────
 
@@ -914,6 +915,24 @@ test('a pattern hit says where its line began, as a search match does, and the e
     const prompt = f.out('Password: ', 'p', 'stdout').seq;
     const quiet = await f.manager.waitFor({ pattern: '^Password:' }, 2000, own);
     assert.deepEqual([quiet.matched, quiet.cursor], [true, prompt - 1]);
+  } finally {
+    f.close();
+  }
+});
+
+test('a session silence watch stands down at the shell\'s exit for the rest of that life: output the life\'s processes print after the exit times nothing, nor does a watch added after it', async () => {
+  const f = bare();
+  try {
+    f.out('x\n');
+    const sw = f.manager.add({ silenceMs: 300, once: true }, A);
+    (f.host as { exit?: { exitCode: number | null } }).exit = { exitCode: 0 };
+    f.journal.append({ type: 'session.exit', code: 0 });
+    f.out('cleaning up\n', 'p1', 'stdout');
+    const late = f.manager.add({ silenceMs: 300, once: true }, A);
+    await sleep(700);
+    assert.deepEqual([f.firings(sw.watchId).length, f.firings(late.watchId).length], [0, 0], 'no firing about the ended shell');
+    const kept = f.manager.list().map((w) => w.watchId);
+    assert.ok(kept.includes(sw.watchId) && kept.includes(late.watchId), 'both once-only watches are kept for the next life');
   } finally {
     f.close();
   }
