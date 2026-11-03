@@ -12,7 +12,8 @@
  *   `nextCursor` already returned; `since: nextCursor, offset: nextOffset`
  *   continues exactly there. Nothing is read twice or skipped.
  * - Head-first pages (`since`, `runId`) take whole events while their bytes fit
- *   `maxBytes`. When the budget cuts a page it ends at a line end in the second
+ *   `maxBytes`, an events page at least one whatever its size. When the budget
+ *   cuts a text page it ends at a line end in the second
  *   half of the budget: after a whole event that completes a line (the cursor
  *   stays a seq), else inside an event (`nextOffset`); else, for a line longer
  *   than the rest of the page, at the budget, mid-line, with the carriage returns
@@ -108,8 +109,8 @@
  *   ends. With more than one source, an unfinished line is shown after lines
  *   other sources wrote after it began (rule 6); when the lines asked for would
  *   leave out the line written last, the tail reaches back to it, returning more
- *   lines than asked for. As events, the tail is the newest N events whose stored lines fit
- *   `maxBytes`. `commands` heads each Run's output in a text tail with
+ *   lines than asked for. As events, the tail is the newest N events, at most 2,000, whose stored
+ *   lines fit `maxBytes` (at least one). `commands` heads each Run's output in a text tail with
  *   `$ <line>` where it started (the 1.x log shape the compat pack serves).
  */
 import { err } from '../core/errors.js';
