@@ -74,7 +74,7 @@ test('fish: ss-2/ss-11: a daemon line\'s job has its own process group — SIGTE
     // A job that ignores ^C and ^\ (a pager's way) still ends: the SIGTERM step reaches it.
     const b = await x.session.admitWhenAvailable({ target: 'shell', line: `sh -c 'trap "" INT QUIT; exec sleep 31.5'`, principal: AGENT });
     assert.ok(b.admitted);
-    await sleep(500);
+    await until(() => pgrep('^sleep 31\\.5').length > 0, 3000, 'the job that ignores ^C and ^\\');
     const c = await x.session.cancel(b.run.runId, AGENT, { graceMs: 300 });
     assert.equal(c.state, 'cancelled', JSON.stringify(c));
     assert.ok(c.steps.some((s) => s.startsWith('SIGTERM')), JSON.stringify(c.steps));
