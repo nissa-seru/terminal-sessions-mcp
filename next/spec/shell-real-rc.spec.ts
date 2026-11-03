@@ -4,9 +4,11 @@
  * real HOME, so whatever the rc brings — prompt themes, history tools, fzf, a
  * terminal's shell integration — meets the integration for real.
  *
- * Side effects are contained: the session keeps its own HISTFILE (under its temp
- * dir), atuin runs on a default config and a temp database, and nothing in the
- * rc files is written. When the daemon was started from Ghostty, Ghostty's own
+ * The session's history is contained: it keeps its own HISTFILE (under its temp
+ * dir), atuin keeps its database and key in the session's directory with sync off,
+ * and nothing in the rc files is written. Whatever else the rc writes under HOME
+ * or the XDG directories (a completion dump, a plugin's cache) reaches the
+ * developer's own files. When the daemon was started from Ghostty, Ghostty's own
  * integration is loaded on purpose (through the session's env, which the scrub of
  * the daemon's env does not touch) to prove keyed marks withstand it.
  */
@@ -37,12 +39,13 @@ for (const shell of ['/bin/zsh', '/bin/bash'].filter(hasShell)) {
       ATUIN_AUTO_SYNC: 'false',
     };
     if (process.env.GHOSTTY_RESOURCES_DIR) env.GHOSTTY_RESOURCES_DIR = process.env.GHOSTTY_RESOURCES_DIR;
-    const x = await realSession(shell, { daemonEnv: { ...process.env }, env });
+    const x = await realSession(shell, { daemonEnv: { ...process.env }, env, userHome: true });
     try {
       assert.equal(x.session.integration, 'rich', `integration with the real rc (start ${x.startMs} ms)`);
       assert.ok(await x.session.waitAvailable(2000), 'the prompt confirmed the shell is available');
       assert.equal(x.session.state, 'idle');
       const lines: Array<[string, (r: { exit?: number; text: string }) => void]> = [
+        ['printf %s "$HOME"', (r) => assert.equal(r.text, os.homedir(), 'the developer\'s own HOME')],
         ['echo hi', (r) => assert.equal(r.text, 'hi')],
         ['false', (r) => assert.equal(r.exit, 1)],
         ['# a note', (r) => assert.equal(r.exit, 0)],
