@@ -239,6 +239,29 @@ test('G17: a queued Run whose principal left and whose seat lapsed is typed into
   await h.session.close();
 });
 
+test('G17: under owner-priority, the owner\'s queued Run does not take the seat back from whoever took it while the Run waited', async () => {
+  const owner = 'agent:owner@test';
+  const h = await harness({ owner, attachOwner: false, control: 'owner-priority' });
+  h.session.attach(owner, 'c0', 'controller');
+  const a = h.session.admit({ target: 'shell', line: 'sleep 10', principal: owner });
+  assert.ok(a.admitted);
+  await until(() => h.session.run(a.run.runId).state === 'running', 2000, 'the first Run running');
+  const q = h.session.admit({ target: 'shell', line: 'echo queued', principal: owner, queue: true });
+  assert.ok(q.admitted);
+  h.session.releaseControl(owner);
+  h.session.attach(AGENT, 'c1', 'controller');
+  assert.equal(h.session.currentController, AGENT);
+  const typedFrom = h.pty.writes.length;
+  h.shell.finishHung(0);
+  await until(() => h.session.run(q.run.runId).state !== 'queued', 2000, 'the queued Run leaving the queue');
+  const r = h.session.run(q.run.runId);
+  assert.equal(r.state, 'lost');
+  assert.match(r.reason ?? '', /^seat-lost-before-start: run requires the controller seat, held by agent:a@test/);
+  assert.equal(h.session.currentController, AGENT, 'the seat stays with the agent who took it');
+  assert.deepEqual(h.pty.writes.slice(typedFrom).filter((w) => w.includes('tsm-cmd-')), [], 'its line was never typed');
+  await h.session.close();
+});
+
 test('G5 (core-5, api-18): human editing never wedges: C-u clears it, a stale line stops blocking and is cleared before our line; empty input is invalid', async () => {
   const h = await harness({ editingStaleMs: 60 });
   assert.equal(code(() => h.session.input('', { principal: AGENT })), 'invalid_argument');
