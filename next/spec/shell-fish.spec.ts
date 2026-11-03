@@ -114,15 +114,17 @@ test('fish: a venv-style wrapper around fish_prompt is rewrapped without recursi
 
 test('fish without its integration: G6: a line typed at the session’s prompt stays out of the user’s fish history', { skip }, async () => {
   const x = await realSession(FISH!, { integration: false });
+  let kept = '';
   try {
     assert.ok((await x.run('echo warm')).text.includes('warm'));
     x.session.input('echo typed-into-fish; history save; echo history-(echo saved)\r', { principal: AGENT });
     const output = () => x.journal.since(0).events.flatMap((e) => (e.type === 'output' ? [e.data] : [])).join('');
     await until(() => output().includes('history-saved'), 3000, 'the typed line ran, history save included');
+    await x.session.close();
+    const file = path.join(x.home, '.local', 'share', 'fish', 'fish_history');
+    kept = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   } finally {
     await x.close();
   }
-  const file = path.join(x.home, '.local', 'share', 'fish', 'fish_history');
-  const kept = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   assert.doesNotMatch(kept, /typed-into-fish/, `the user's fish history: ${JSON.stringify(kept)}`);
 });
