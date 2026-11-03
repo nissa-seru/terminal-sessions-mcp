@@ -992,7 +992,7 @@ export class TermServer {
             '(`await` it or `read` its output) and keeps running. `screen` shows the terminal now; `input` types into it. ' +
             // What an MCPL host is promised depends on its grant, unknown at initialize (the house's read of 2f357bd, #22).
             (wantsMcpl
-              ? 'When your host grants terminal.live push events, a command you started that outlives your wait is reported when it ends; otherwise `await` it or `read` with the returned cursor. Open a session’s channel to follow everything that happens in it.'
+              ? 'When your host grants terminal.live push events, a command you started that outlives your wait is reported when it ends; otherwise `await` it or `read` with the returned cursor. When it grants terminal.channels, open a session’s channel to follow everything that happens in it.'
               : 'Use `read` with the returned cursor to see what happened since.'),
         };
       }
