@@ -1114,6 +1114,7 @@ export class App {
         this.authorize(caller.principal, s, 'signal');
         // A Run of an ended shell (history, or an earlier life of this name): its recorded outcome (jr2-13).
         if (!runner) return { runId: o.runId, state: run.state, contract: run.target, steps: [] as string[] };
+        this.ensureAttached(caller, runner);
         return runner.cancel(o.runId, caller.principal, this.seat(caller, runner));
       },
       async (prev) => ({ ...prev, replayed: true }),
@@ -1297,6 +1298,7 @@ export class App {
       o,
       async () => {
         const session = this.liveFor(caller, o.session, 'signal');
+        this.ensureAttached(caller, session);
         session.signal(o.signal ?? 'SIGINT', caller.principal, this.seat(caller, session));
         return { ok: true as const };
       },
@@ -1312,6 +1314,7 @@ export class App {
       o,
       async () => {
         const session = this.liveFor(caller, o.session, 'resize');
+        this.ensureAttached(caller, session);
         session.resize(o.cols, o.rows, caller.principal, this.seat(caller, session));
         return { ok: true as const };
       },
@@ -1353,6 +1356,7 @@ export class App {
       o,
       async () => {
         const session = this.liveFor(caller, o.session, 'run');
+        this.ensureAttached(caller, session);
         const snap = await session.captureEnv(caller.principal, undefined, this.seat(caller, session));
         return { seq: snap.seq, count: Object.keys(snap.vars).length };
       },
