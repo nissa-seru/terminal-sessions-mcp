@@ -1242,26 +1242,32 @@ export class SessionRegistry {
 
   /**
    * Close every live session (daemon shutdown). They reappear after a restart as history-only,
-   * not closed. Cursors are flushed and the data dir's lock released last.
+   * not closed. Cursors are flushed and the data dir's lock released last: after the sessions
+   * opened while it ran are closed too, and no name's operation is pending.
    */
   async closeAll(opts: { graceful?: boolean; reason?: string } = {}): Promise<void> {
-    const keys = new Set([...this.slots.keys()].map(fold));
-    for (const k of this.locks.keys()) keys.add(k);
-    await Promise.all(
-      [...keys].map((key) =>
-        this.withLock(key, async () => {
-          for (const slot of [...this.slots.values()]) {
-            if (fold(slot.id) !== key || slot.view.kind !== 'live') continue;
-            try {
-              await this.closeLive(slot, { ...opts, persist: false });
-            } catch {
-              // closeLive has already turned it into history
+    const closed = new Set<LiveEntry>();
+    const unclosed = (slot: Slot) => slot.view.kind === 'live' && !closed.has(slot.view);
+    do {
+      const keys = new Set([...this.slots.keys()].map(fold));
+      for (const k of this.locks.keys()) keys.add(k);
+      await Promise.all(
+        [...keys].map((key) =>
+          this.withLock(key, async () => {
+            for (const slot of [...this.slots.values()]) {
+              if (fold(slot.id) !== key || !unclosed(slot)) continue;
+              closed.add(slot.view as LiveEntry);
+              try {
+                await this.closeLive(slot, { ...opts, persist: false });
+              } catch {
+                // closeLive has already turned it into history
+              }
+              this.emit({ type: 'closed', id: slot.id });
             }
-            this.emit({ type: 'closed', id: slot.id });
-          }
-        }).catch(() => undefined),
-      ),
-    );
+          }).catch(() => undefined),
+        ),
+      );
+    } while (this.locks.size > 0 || [...this.slots.values()].some(unclosed));
     this.dispose();
   }
 

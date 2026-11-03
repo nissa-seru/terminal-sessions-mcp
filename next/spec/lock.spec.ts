@@ -19,6 +19,7 @@ import { ScriptedBackend } from '../src/backends/scripted.js';
 import { TermError } from '../src/core/errors.js';
 import { Journal } from '../src/core/journal.js';
 import { acquireDataDirLock, bootId, listProcesses, LOCK_FILE, parseProcStat, PROC_START_SLACK_MS, procStart, readProcStat, type ProcessSource } from '../src/core/lock.js';
+import { AGENT, fakeShellBackend } from './fake-shell.js';
 
 /**
  * The builtin modules as lock.js sees them: patching a function here and calling syncBuiltinESMExports
@@ -131,6 +132,49 @@ test('jr2-2/tsg-1/G10: a registry refuses a data dir another live process holds,
   } finally {
     holder.proc.kill('SIGKILL');
   }
+});
+
+test('jr2-2/G10: closeAll releases the lock only after a session opened while it waited on another close is closed too', async (t) => {
+  const dir = dataDir();
+  const reg = new SessionRegistry({ dataDir: dir, backend: fakeShellBackend(() => {}, { marks: 'rich' }), defaultShell: '/bin/bash', noUserRc: true });
+  t.after(() => reg.closeAll());
+  const a = await reg.create({ id: 'a', owner: AGENT });
+  let entered!: () => void;
+  const closing = new Promise<void>((r) => (entered = r));
+  let open!: () => void;
+  const gate = new Promise<void>((r) => (open = r));
+  const close = a.close.bind(a);
+  a.close = async (o) => {
+    entered();
+    await gate;
+    return close(o);
+  };
+  const all = reg.closeAll({ reason: 'daemon-shutdown' });
+  await closing;
+  await reg.create({ id: 'b', owner: AGENT });
+  open();
+  await all;
+  assert.equal(reg.get('a')?.kind, 'history');
+  assert.equal(reg.get('b')?.kind, 'history', 'the session opened during closeAll is closed before the lock goes');
+  assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false, 'released at closeAll');
+});
+
+test('closeAll closes each session once: one whose seal threw stays live, and the lock is released', async (t) => {
+  const dir = dataDir();
+  const reg = new SessionRegistry({ dataDir: dir, backend: fakeShellBackend(() => {}, { marks: 'rich' }), defaultShell: '/bin/bash', noUserRc: true });
+  const a = await reg.create({ id: 'a', owner: AGENT });
+  const seal = a.journal.seal.bind(a.journal);
+  let calls = 0;
+  a.journal.seal = () => {
+    calls++;
+    if (calls === 1) throw new Error('seal refused');
+    seal();
+  };
+  t.after(() => reg.closeAll());
+  await reg.closeAll({ reason: 'daemon-shutdown' });
+  assert.equal(calls, 1, 'closeAll tried the session once');
+  assert.equal(reg.get('a')?.kind, 'live', 'the close threw before the session became history');
+  assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false, 'released at closeAll');
 });
 
 test('jr2-2: a lock naming a live pid that started after the lock was written is stale (pid reuse); a hostname does not decide', async () => {
