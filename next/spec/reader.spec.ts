@@ -2157,6 +2157,23 @@ test("a page MAX_SCAN stops reads its last line's end from what the next page's 
   assert.deepEqual(await join('', '$ ls -l', '\b \bs'), { splitLine: true, tail: 'aaaa$ ls -ls' });
 });
 
+test("a page MAX_SCAN stops reads its last line's end from the next output past any notes: the pages join as they do with none", async () => {
+  const join = async (notes: number) => {
+    const src = source();
+    let seq = 0;
+    while (seq < 20000) seq = out(src.journal, 'a');
+    for (let i = 0; i < notes; i++) src.journal.append({ type: 'note', text: 'n', principal: 'agent:a@test' });
+    out(src.journal, '\rXYZ');
+    const { text, pages } = await readAll(src, { since: 0, maxBytes: 1 << 20 });
+    assert.equal(pages.length, 2, 'premise: MAX_SCAN stops the first page');
+    return { splitLine: pages[0]!.splitLine, tail: text.slice(text.lastIndexOf('aaaa')) };
+  };
+  const none = await join(0);
+  assert.deepEqual(none, { splitLine: undefined, tail: 'aaaa\nXYZ' });
+  assert.deepEqual(await join(1), none);
+  assert.deepEqual(await join(3000), none, 'notes past the batch the page stopped in');
+});
+
 test("a page MAX_SCAN stops ends its last line before another source's output, which begins a line of its own (DESIGN §6 rule 6), and goes on into its own source's output after another source's line, and through input typed at it (the house's review of 5d8ce0e..21fed2f, PR #22, I44)", async () => {
   const join = async (build: (src: ReturnType<typeof source>) => void) => {
     const src = source();
