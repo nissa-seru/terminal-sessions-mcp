@@ -196,6 +196,18 @@ test('a missing Run’s advice on the compat profile names where a runId comes f
   assert.match(r.text, /^run_not_found: run r1-000000 not found: the id comes from a runCommand or launch result, and a forgotten session's Runs are gone with it$/, r.text);
 });
 
+test('runCommand says when it stopped reading a Run’s output before its end', async () => {
+  let n = 0;
+  const stub = {
+    maxWaitMs: 55_000,
+    sessionSummary: () => undefined,
+    run: async () => ({ runId: 'r1', session: 's', state: 'exited', exit: 0, durationMs: 1, target: 'shell', cwd: '/', output: { text: '', truncated: false, seq: [1, 1], nextCursor: 1 } }),
+    read: async () => ({ session: 's', runId: 'r1', seq: [n, n + 1], nextCursor: ++n, more: true, truncated: false, text: 'x' }),
+  } as unknown as App;
+  const r = JSON.parse((await callTool('runCommand', { session: 's', command: 'flood' }, { app: stub, caller: A, resultText: 'json' }, compat)).text) as { output: string };
+  assert.match(r.output, /\n\[… later output not read: read \{"session": "s", "runId": "r1", "since": 4096\} to go on from here\]$/);
+});
+
 test('launch waits for its patterns 15 s, as 1.x polled them, and 2.5 s without', async () => {
   const waits: Array<number | undefined> = [];
   const stub = {
