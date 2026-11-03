@@ -629,6 +629,36 @@ test("tg-19: after a drop, the request in flight is failed and not resent, the r
   }
 });
 
+test('tg-19: a featureSets/update in flight when the connection drops is replayed after the grant, so the new connection has the grant the host last asked for, not the wider one before it', async () => {
+  const p = await peer((c, m) => {
+    if (c.index === 0 && m.method === 'featureSets/update' && m.id === 3) return undefined; // the narrowing: in flight when the connection drops
+    return { result: {} };
+  });
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    const wide = { effectiveCapabilities: ['tools', 'pushEvents', 'channels.lifecycle'] };
+    const narrow = { effectiveCapabilities: ['tools'] };
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: wide });
+    await s.next(byId(2));
+    s.send({ jsonrpc: '2.0', id: 3, method: 'featureSets/update', params: narrow });
+    await until(() => p.conns[0]!.frames.some((f) => f.id === 3), 5000, 'the narrowing to reach the peer');
+    p.conns[0]!.ws.terminate();
+    assert.equal((await s.next(byId(3))).error?.code, -32000, 'the host is told its outcome is unknown');
+    s.send({ jsonrpc: '2.0', id: 4, method: 'ping' });
+    assert.deepEqual((await s.next(byId(4))).result, {});
+    const updates = p.conns[1]!.frames.filter((f) => f.method === 'featureSets/update').map((f) => f.params);
+    assert.deepEqual(updates, [wide, narrow], 'the accepted grant, then the update whose answer never came');
+    assert.ok(noReplayedAnswer(s));
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 test('tg-19: an initialize the daemon answered starts the replayed picture over: a reconnect after it replays no grant or channel from before it', async () => {
   const p = await peer((_c, m) => (m.method === 'channels/open' ? { result: { channel: { id: 'terminal:k1' } } } : { result: {} }));
   const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
