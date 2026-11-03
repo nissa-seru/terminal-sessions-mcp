@@ -45,8 +45,8 @@ for (const shell of ['/bin/zsh', '/bin/bash'].filter(hasShell)) {
       const lines: Array<[string, (r: { exit?: number; text: string }) => void]> = [
         ['printf %s "$HOME"', (r) => assert.equal(r.text, os.homedir(), 'the developer\'s own HOME')],
         ['echo hi', (r) => assert.equal(r.text, 'hi')],
-        ['false', (r) => assert.equal(r.exit, 1)],
         ['# a note', (r) => assert.equal(r.exit, 0)],
+        ['false', (r) => assert.equal(r.exit, 1)],
         ['echo "Done!"', (r) => assert.equal(r.text, 'Done!')],
         ['printf abc', (r) => assert.equal(r.text, 'abc')],
         ['sh -c "exit 9"', (r) => assert.equal(r.exit, 9)],
