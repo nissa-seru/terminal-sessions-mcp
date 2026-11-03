@@ -17,7 +17,7 @@ import { SessionRegistry } from '../src/api/registry.js';
 import { NodePtyBackend } from '../src/backends/node-pty.js';
 import { clocks } from '../src/core/clock.js';
 import type { Session } from '../src/core/session.js';
-import { until } from './testhost.js';
+import { gate, until } from './testhost.js';
 
 const A: Caller = { principal: 'agent:a@test', connectionId: 'pa' };
 const B: Caller = { principal: 'agent:b@test', connectionId: 'pb' };
@@ -196,6 +196,19 @@ test('late output of a process Run’s background child is news, not a prompt re
   const text = P(A, ['late']);
   assert.doesNotMatch(text, /idle, nothing new/);
   assert.match(text, /late: idle \(cwd .*\) · \d+ B new since your last read \(read since=\d+\)/);
+});
+
+test('a closed session holding output its reader has not read is news, though no Run ended after the cursor', async () => {
+  await app.sessionOpen(A, { id: 'late-closed' });
+  const held = gate();
+  const r = await app.run(A, { session: 'late-closed', command: `(${held.wait}; echo late-line) & exit 0`, target: 'process' });
+  assert.equal(r.state, 'exited');
+  held.open();
+  const s = live('late-closed');
+  await until(() => s.journal.tail(50).some((e) => e.type === 'output' && e.runId === undefined && e.stream === 'stdout' && e.data.includes('late-line')), 4000, 'the late line');
+  await app.sessionClose(A, { session: 'late-closed' });
+  assert.equal(registry.get('late-closed')?.kind, 'history');
+  assert.match(P(A, ['late-closed']), /late-closed: closed · \d+ B of output you have not read \(read since=\d+\)/);
 });
 
 test('a human typing is news; the reader’s own typing and protocol replies are not', async () => {
