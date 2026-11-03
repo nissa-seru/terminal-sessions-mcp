@@ -5,15 +5,16 @@
  * through `onReply` so the session can write them back to the PTY.
  *
  * Feeding. PTY output is queued and handed to the emulator in batches: everything
- * queued when the emulator is free goes in one xterm write (capped at
- * MAX_BATCH), and the next batch is issued from the previous one's parse
- * callback. There is no promise or timer per chunk, so throughput is the
- * parser's, and exactly one batch is ever inside xterm. Because xterm parses a
- * single write without yielding, the emulator state seen by any other code is
- * always the state after a whole batch: `appliedSeq` (the seq passed with the
- * last parsed write) names exactly what the screen shows, and a snapshot never
- * claims output the emulator has not parsed (G13, G14). Resizes go through the
- * same queue, so output received before a resize is parsed at the old size.
+ * queued when the emulator is free goes in one xterm write (capped at MAX_BATCH,
+ * unless one write alone is larger), and the next batch is issued from the
+ * previous one's parse callback. There is no promise or timer per chunk, so
+ * throughput is the parser's, and exactly one batch is ever inside xterm. Because
+ * xterm parses a single write without yielding, the emulator state seen by any
+ * other code is always the state after a whole batch: `appliedSeq` (the seq
+ * passed with the last parsed write) names exactly what the screen shows, and a
+ * snapshot never claims output the emulator has not parsed (G13, G14). Resizes go
+ * through the same queue, so output received before a resize is parsed at the old
+ * size.
  *
  * Backpressure. The backlog (queued, unparsed UTF-16 units) is reported through
  * `onPressure`: `true` when it reaches `highWater`, `false` once it drains to
@@ -38,7 +39,7 @@ const { SerializeAddon } = serializeAddon as unknown as {
   SerializeAddon: new () => { serialize(opts?: { scrollback?: number; excludeModes?: boolean; excludeAltBuffer?: boolean }): string; activate(t: unknown): void; dispose(): void };
 };
 
-/** Largest single xterm write, in UTF-16 units: bounds one parse slice (tens of ms at worst). */
+/** Largest batch of queued writes in one xterm write, in UTF-16 units: bounds one parse slice (tens of ms at worst) when no single write is larger. */
 const MAX_BATCH = 256 * 1024;
 const SECRET_PROMPT_MAX_CHARS = 1024;
 
