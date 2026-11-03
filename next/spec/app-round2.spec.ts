@@ -128,6 +128,35 @@ test('G16: a keyed run retried after a restart is the same Run, never a second e
   }
 });
 
+for (const [verb, act] of [
+  ['signal', (session: string, C: Caller) => tool('signal', { session }, C)],
+  ['resize', (session: string, C: Caller) => tool('resize', { session, cols: 100, rows: 30 }, C)],
+  ['env capture', (session: string, C: Caller) => tool('session_env_capture', { session }, C)],
+  [
+    'cancel',
+    async (session: string, C: Caller) => {
+      const r = await tool('run', { session, command: 'sleep 30', wait: 0 });
+      await tool('control', { session, action: 'release' });
+      return tool('cancel', { session, runId: r.structured?.runId as string }, C);
+    },
+  ],
+] as const) {
+  test(`a seat taken by ${verb} is released when the connection that took it closes`, async () => {
+    const session = `seat-${verb.replace(' ', '-')}`;
+    const C: Caller = { principal: 'agent:b@test', connectionId: `cb-${session}` };
+    await tool('session_open', { session, visibility: 'shared' });
+    assert.equal((await tool('run', { session, command: 'echo ready' })).structured?.state, 'exited', 'premise: the shell is up');
+    await tool('control', { session, action: 'release' });
+    const live = registry.get(session);
+    assert.ok(live?.kind === 'live');
+    const r = await act(session, C);
+    assert.equal(r.isError, undefined, r.text);
+    assert.equal(live.session.currentController, C.principal, `premise: ${verb} took the free seat`);
+    app.detachConnection(C.connectionId, { clean: true });
+    assert.equal(live.session.currentController, null, 'released with its connection');
+  });
+}
+
 test('G16: a replay after the session was forgotten returns the first outcome (atc-21); control, env capture and unwatch take keys', async () => {
   const k = `kf-${Date.now()}`;
   const first = await tool('run', { session: 'forg', command: 'echo gone', idempotencyKey: k });
