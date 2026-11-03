@@ -504,7 +504,7 @@ export const TOOLS: ToolDef[] = [
     description:
       'Run a command in a session and wait up to `wait` ms for it to end. The default `shell` target runs it in the ' +
       "session's persistent shell, so `cd`, `export` and activations persist across runs (and `exit` ends the session's shell); " +
-      'the `process` target spawns it directly with an exact exit status and separate stderr, in the shell’s cwd, but none of its exports. ' +
+      'the `process` target spawns it directly with an exact exit status and separate stderr, in the shell’s cwd, but without its exports unless `envBasis: snapshot` gives it the last session_env_capture. ' +
       'Returns the output and one status line. If the command is still running when the wait ends you get its runId ' +
       'and `state: running` — it keeps running; use `await` to keep waiting or `read` to fetch what it printed. ' +
       'If another command is occupying the shell you get `state: busy` and nothing runs (pass `queue: true` to run after it). ' +
