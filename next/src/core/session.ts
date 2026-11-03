@@ -732,6 +732,7 @@ export class Session {
     // history tools the user's rc may load (atuin) pointed at the session's own directory.
     const env: Record<string, string> = { ...this.configured, HISTFILE: this.histFile };
     const given = this.opts.env ?? {};
+    if (!integrated && kind === 'fish' && !('fish_history' in given)) env.fish_history = '';
     const historyDir = path.join(this.tempDir, `tsm-history-${this.safeId}.d`);
     const isolation = historyIsolationEnv(historyDir);
     if (!Object.keys(isolation).some((k) => k in given)) {
