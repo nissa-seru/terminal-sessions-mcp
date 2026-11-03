@@ -107,11 +107,14 @@
  * Cost: the emulator is fed in batches sized so that no row can scroll out of
  * its small scrollback before it is read, and so that no control sequence is
  * split; rows are moved into the projection as they scroll, so memory is
- * bounded by the kept text, not by the range, and time is linear in the
- * projected bytes. With `maxInputBytes`, the chunks are cut to the budget as
- * they are gathered (what is dropped leaves only its lasting state behind), so
- * a range far larger than the budget costs the budget; with `maxLines` alone,
- * the range is gathered whole before the newline count cuts it.
+ * bounded by the kept text, not by the range, and the emulator's time is linear
+ * in the projected bytes. With `maxInputBytes`, the chunks are cut to the
+ * budget as they are gathered (what is dropped leaves only its lasting state
+ * behind), so a range far larger than the budget costs about the budget in
+ * memory for what is kept, though every chunk is still scanned and each
+ * source's unfinished line is held, up to twice the budget, until it ends or is
+ * cut; with `maxLines` alone, the range is gathered whole before the newline
+ * count cuts it.
  */
 import xterm from '@xterm/headless';
 import type { IBuffer, Terminal as TerminalType } from '@xterm/headless';
