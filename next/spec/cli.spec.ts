@@ -150,11 +150,15 @@ test('a tool call on a closing socket says no command was sent', async () => {
   const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise<void>((resolve) => wss.once('listening', resolve));
   let sawToolCall = false;
+  let answeredList = false;
   wss.on('connection', (ws) => ws.on('message', (data) => {
     const m = JSON.parse(data.toString()) as { id: number; method: string };
     const reply = (result: unknown) => ws.send(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }));
     if (m.method === 'initialize') return reply({ protocolVersion: '2025-06-18', capabilities: {} });
-    if (m.method === 'tools/list') return reply({ tools: [{ name: 'run', inputSchema: TOOLS.find((tool) => tool.name === 'run')!.inputSchema }] });
+    if (m.method === 'tools/list') {
+      answeredList = true;
+      return reply({ tools: [{ name: 'run', inputSchema: TOOLS.find((tool) => tool.name === 'run')!.inputSchema }] });
+    }
     if (m.method === 'tools/call') sawToolCall = true;
   }));
   try {
@@ -163,6 +167,7 @@ test('a tool call on a closing socket says no command was sent', async () => {
     const options = [process.env.NODE_OPTIONS, `--require=${preload}`].filter(Boolean).join(' ');
     const r = await tsm(['run', 'build', 'echo never-sent'], { TSM_URL: `ws://127.0.0.1:${port}`, NODE_OPTIONS: options });
     assert.equal(r.code, 1);
+    assert.ok(answeredList, 'the connection got past initialize to the tools/list the preload closes on');
     assert.equal(sawToolCall, false, 'the server never saw a tools/call');
     assert.match(r.stderr, /no command was sent/i);
     assert.doesNotMatch(r.stderr, /outcome is unknown/i);
