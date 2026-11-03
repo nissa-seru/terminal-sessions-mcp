@@ -570,6 +570,7 @@ async function textPage(src: ReadSource, o: ReadOptions, maxBytes: number, geome
   let lastExamined = start;
   let exhausted = false;
   let uncollected: JournalEvent | undefined;
+  let unread: JournalEvent[] = [];
   /** Per source, what its pieces left unfinished for the line-end rule (lineEnds). */
   const carries = new Map<string, LineCarry>();
   /** The head of the CSI or escape sequence that `offset` falls inside (headAt), which the page goes on from. */
@@ -593,9 +594,10 @@ async function textPage(src: ReadSource, o: ReadOptions, maxBytes: number, geome
       exhausted = true;
       break;
     }
-    for (const e of batch) {
+    for (const [i, e] of batch.entries()) {
       if (full() || examined >= MAX_SCAN) {
         uncollected = e;
+        unread = batch.slice(i + 1);
         break outer;
       }
       examined++;
@@ -637,6 +639,11 @@ async function textPage(src: ReadSource, o: ReadOptions, maxBytes: number, geome
   // Whether events of the range remain after everything collected (the scan stopped early).
   const scanCut = !exhausted;
   const rangeEnd = exhausted ? Math.max(lastExamined, w.end) : lastExamined;
+  let following = uncollected;
+  for (let looked = 0; following !== undefined && !isGap(following) && !isOutput(following); looked++) {
+    if (unread.length === 0) unread = looked < MAX_SCAN ? w.next() : [];
+    following = unread.shift();
+  }
   // The hole inferred at the page's start, less what the holes the journal knows there say, each part where it lies
   // among them: a recorded hole is seated where it is, inside the inferred one, and its line goes in seq order.
   const lead = pieces[0];
@@ -701,7 +708,7 @@ async function textPage(src: ReadSource, o: ReadOptions, maxBytes: number, geome
     truncated: p.lost || p.omitted > 0,
   };
   if (nextOffset !== undefined) r.nextOffset = nextOffset;
-  const goesOn = p.lastLine !== undefined && (allTaken ? !(await endsLastLine(src, o, geometry, p, uncollected)) : p.lastLine === 'unfinished');
+  const goesOn = p.lastLine !== undefined && (allTaken ? !(await endsLastLine(src, o, geometry, p, following)) : p.lastLine === 'unfinished');
   if (goesOn && (more || open)) r.splitLine = true;
   return withGapInfo(r, metHoles(journal, r.seq[0], r.seq[1], chosen.gaps));
 }
