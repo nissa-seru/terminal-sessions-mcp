@@ -150,6 +150,29 @@ test('jr2-6: a journal handed on unsealed, as the registry\'s release can leave 
   }
 });
 
+test('jr2-6: a journal handed on writes nothing more: an event appended after, and its seal, leave the store as the hand-on found it', () => {
+  const dir = tmpDir();
+  try {
+    class Counting extends FileStore {
+      marks = 0;
+      override setHighWater(change: Parameters<FileStore['setHighWater']>[0]): boolean {
+        this.marks++;
+        return super.setHighWater(change);
+      }
+    }
+    const cold = new Counting(dir);
+    const j = new Journal({ cold });
+    j.append(out('a'));
+    const marks = cold.marks;
+    j.handOn();
+    j.append(out('late'));
+    j.seal();
+    assert.deepEqual([seqs(onDisk(dir)), cold.marks - marks], [[1], 0]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('jr2-6: a sealed journal over a store that keeps no high water writes its ring once the disk takes writes', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const dir = tmpDir();

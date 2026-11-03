@@ -345,9 +345,9 @@ export class Journal {
   }
 
   append(input: EventInput): JournalEvent {
-    if (this.sealed) {
-      // A closed session's stragglers (a process Run's late exit, jr-10) must not
-      // reach the store: a new life of the name may be numbering the same file.
+    if (this.sealed || this.handedOn) {
+      // A closed or handed-on session's stragglers (a process Run's late exit, jr-10) must not
+      // reach the store: a new life of the name, or another daemon, may be numbering the same file.
       // The returned event is not part of the journal.
       this.dropped++;
       return this.stamp(input, this.seq + 1);
@@ -527,7 +527,7 @@ export class Journal {
    * landing, and nothing else would say so. The write that lands after it is said too.
    */
   private keepMark(): void {
-    if (!this.cold?.setHighWater) return;
+    if (!this.cold?.setHighWater || this.handedOn) return;
     const failed = this.holesUnrecorded();
     const ahead = this.reserved > this.seq;
     // While failing, also when a hole the mark does not reach down to appeared (a refused gap's, below the files' last),
@@ -599,6 +599,7 @@ export class Journal {
    * never cleared while it lasts) or with this boot, and remember it once it is confirmed.
    */
   private writeReservation(to: Seq, failed: boolean): boolean {
+    if (this.handedOn) return false;
     // Clearing a failed mark says the files now record every hole it stood for. Appends are not synced, so the
     // gaps that record them are synced first: a power loss that took a stretch's gap line and kept the clear left
     // the hole unrecorded for good, since only a failed mark makes a start look for jumps in the files (the
@@ -641,6 +642,7 @@ export class Journal {
    * and a `gap` event says so.
    */
   private catchUp(): boolean {
+    if (this.handedOn) return false;
     this.catchingUp = true;
     try {
       this.noteRingDrops();
@@ -691,8 +693,9 @@ export class Journal {
   retryCold(): boolean {
     if (!this.cold || this.coldError === null) return true;
     if (!this.sealed) return this.catchUp();
+    const ok = this.flushSealed();
     this.handOn();
-    return this.flushSealed();
+    return ok;
   }
 
   private flushSealed(): boolean {
@@ -971,7 +974,7 @@ export class Journal {
     if (this.markTimer) clearTimeout(this.markTimer);
     this.markTimer = undefined;
     if (this.cold && this.coldError !== null) this.catchUp();
-    if (this.cold?.setHighWater && !this.exactlyReserved()) {
+    if (this.cold?.setHighWater && !this.handedOn && !this.exactlyReserved()) {
       // Exact now: a sealed journal issues no more seqs, so the next journal over the store numbers on from
       // this one's last, and after a power loss records as lost only what the files lost. If the disk
       // refuses this too, the reservation a block ahead stands, which is safe: no seq is given twice. But the
