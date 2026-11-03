@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { App, type Caller } from '../src/api/app.js';
 import { SessionRegistry } from '../src/api/registry.js';
-import { callTool, TOOLS, type ResultText, type ToolResult } from '../src/api/tools.js';
+import { callTool, TOOLS, toolsFor, type ResultText, type ToolResult } from '../src/api/tools.js';
 import { validate } from '../src/api/validate.js';
 import { NodePtyBackend } from '../src/backends/node-pty.js';
 import { sleep, until } from './testhost.js';
@@ -229,28 +229,41 @@ test('G30: cancel on an earlier life’s Run returns its recorded outcome (jr2-1
 });
 
 test('atc-15: every tool’s success text is JSON in json mode', async () => {
-  await tool('session_open', { session: 'js1' });
-  const calls: Array<[string, Record<string, unknown>]> = [
-    ['run', { session: 'js1', command: 'echo j' }],
-    ['input', { session: 'js1', text: '' , keys: ['C-u'] }],
-    ['session_list', {}],
-    ['screen', { session: 'js1' }],
-    ['read', { session: 'js1', tail: 3 }],
-    ['control', { session: 'js1', action: 'status' }],
-    ['resize', { session: 'js1', cols: 100, rows: 30 }],
-    ['session_env_capture', { session: 'js1' }],
-    ['watch', { session: 'js1', pattern: 'zz' }],
-    ['watches', { session: 'js1' }],
-    ['wait_for', { session: 'js1', pattern: 'j', since: 0, wait: 500 }],
-    ['search', { session: 'js1', pattern: 'j' }],
-    ['signal', { session: 'js1', signal: 'SIGINT' }],
-    ['session_close', { session: 'js1' }],
-  ];
-  for (const [name, args] of calls) {
+  const called = new Set<string>();
+  const json = async (name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const r = await tool(name, args, A, 'json');
     assert.equal(r.isError, undefined, `${name}: ${r.text}`);
     assert.doesNotThrow(() => JSON.parse(r.text), `${name}: ${r.text}`);
-  }
+    called.add(name);
+    return JSON.parse(r.text) as Record<string, unknown>;
+  };
+  await json('session_open', { session: 'js1' });
+  const ran = await json('run', { session: 'js1', command: 'echo j' });
+  await json('await', { session: 'js1', runId: ran.runId });
+  await json('input', { session: 'js1', text: '' , keys: ['C-u'] });
+  await json('session_list', {});
+  await json('screen', { session: 'js1' });
+  await json('read', { session: 'js1', tail: 3 });
+  await json('control', { session: 'js1', action: 'status' });
+  await json('resize', { session: 'js1', cols: 100, rows: 30 });
+  await json('session_env_capture', { session: 'js1' });
+  const w = await json('watch', { session: 'js1', pattern: 'zz' });
+  await json('watches', { session: 'js1' });
+  await json('unwatch', { session: 'js1', watchId: w.watchId });
+  await json('wait_for', { session: 'js1', pattern: 'j', since: 0, wait: 500 });
+  await json('search', { session: 'js1', pattern: 'j' });
+  await json('signal', { session: 'js1', signal: 'SIGINT' });
+  const started = await json('start', { session: 'js1', command: 'sleep 30', target: 'process', wait: 0 });
+  await json('cancel', { session: 'js1', runId: started.runId });
+  const front = await json('run', { session: 'js1', command: 'cat', wait: 0 });
+  const live = registry.get('js1');
+  assert.ok(live?.kind === 'live');
+  await until(() => live.session.run(front.runId as string).state === 'running', 5000, 'cat is in front');
+  await json('session_declare_shell', { session: 'js1', shell: 'sh' });
+  await json('session_declare_shell', { session: 'js1', shell: 'none' });
+  await json('cancel', { session: 'js1', runId: front.runId });
+  await json('session_close', { session: 'js1' });
+  assert.deepEqual([...called].sort(), toolsFor('full').map((t) => t.name).sort(), 'every tool was called');
 });
 
 test('G28: a terminal Run result is marked delivered only when the transport says it was sent (mcpl-1)', async () => {
