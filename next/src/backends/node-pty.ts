@@ -398,7 +398,14 @@ function executable(cmd: string, PATH: string | undefined, cwd: string): { ok: t
       return 'EACCES';
     }
     // A script whose interpreter is missing cannot be executed either (ENOENT from execve).
-    const fd = fs.openSync(file, 'r');
+    let fd: number;
+    try {
+      fd = fs.openSync(file, 'r');
+    } catch (e) {
+      // Execute without read: a native binary still runs; a script's interpreter then cannot open it.
+      if (errCode(e) === 'EACCES') return undefined;
+      throw e;
+    }
     try {
       const head = Buffer.alloc(256);
       const n = fs.readSync(fd, head, 0, head.length, 0);
