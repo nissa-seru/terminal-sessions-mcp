@@ -207,7 +207,8 @@ export function narrowOutput(o: RunOutput, range: RunOutputRange): RunOutput {
 
 /**
  * A Run's attributed output (G12) in the journal range [from, to], narrowed by `range`: equal to
- * `narrowOutput` over the whole range, but reading only what the range asks for (jr2-9, er-11).
+ * `narrowOutput` over the whole range, but reading only what the range asks for, except that a
+ * hole outside `range` doesn't make it `truncated` (jr2-9, er-11).
  * `since`/`until` bound the journal range; `maxBytes` alone walks it backwards in tail pages
  * until one event more than fits; otherwise it is read forward until one output event more than
  * `limit` (a hole in the journal is read past). `truncated` when retention cut the Run's range (G11).
