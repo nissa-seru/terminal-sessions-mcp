@@ -33,7 +33,7 @@ import {
   type SegmentSource,
 } from '../src/core/segmenter.js';
 import { clocks } from '../src/core/clock.js';
-import type { JournalEvent, RunInfo, ScreenSnapshot } from '../src/core/types.js';
+import { SYSTEM, type JournalEvent, type RunInfo, type ScreenSnapshot } from '../src/core/types.js';
 import { sleep, until } from './testhost.js';
 
 const A = 'agent:a@t';
@@ -197,6 +197,29 @@ test('m2-4/mcpl-2: a restart is one recovery message with the exit it cut short 
   );
   assert.match(h.segments[1]!.head, /the shell had ended with code 1/);
 });
+
+for (const note of [false, true]) {
+  test(`channel history folds a restart's exit into its recovery at every page size, and the page below it does not show that exit again${note ? ', with a group note between the lost Run and the recovery' : ''}`, async () => {
+    const src = fakeSource();
+    startRun(src, 'long', B, 'sleep 60');
+    src.journal.append({ type: 'session.exit', code: 1 });
+    const lost = endRun(src, 'long', { state: 'lost', reason: 'daemon-shutdown' });
+    const groupNote = note ? src.journal.append({ type: 'note', text: 'recovery: process group 4242 terminated with long, which recovery ended lost', principal: SYSTEM }) : undefined;
+    const rec = src.journal.append({ type: 'recovered', class: 'history-only' });
+    const history = journalSource({ id: 's1', journal: src.journal, owner: A, run: (id) => src.journal.runs.run(id) });
+    const kinds = (r: { segments: { kind: string }[] }) => r.segments.map((s) => s.kind);
+    const one = await replayNewest(history, { limit: 1 });
+    assert.deepEqual(kinds(one), ['recovered']);
+    assert.match(one.segments[0]!.head, /the shell had ended with code 1/);
+    const below = await replayNewest(history, { limit: 10, before: rec.seq });
+    assert.deepEqual(kinds(below), note ? ['run', 'note'] : ['run']);
+    const two = await replayNewest(history, { limit: 2 });
+    assert.deepEqual(kinds(two), [note ? 'note' : 'run', 'recovered']);
+    assert.match(two.segments[1]!.head, /the shell had ended with code 1/);
+    const belowTwo = await replayNewest(history, { limit: 10, before: (groupNote ?? lost).seq });
+    assert.deepEqual(kinds(belowTwo), note ? ['run'] : []);
+  });
+}
 
 test('a restart folding in the exit names whoever the exit cut short, the Runs it ended before the restart too, each once', async () => {
   const C = 'agent:c@t';
