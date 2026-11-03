@@ -33,8 +33,15 @@ const anyOf = (patterns: unknown): string | undefined => {
   return patterns.map((p) => String(p).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
 };
 
-/** Core tool names in texts that reach a compat caller, in the compat profile's words. */
-const compatWords = (text: string): string => text.replace(/\bsession_close\b/g, 'killSession').replace(/\bsession_open\b/g, 'runCommand');
+const COMPAT_ADVICE: ReadonlyArray<readonly [string, string]> = [
+  ['session_list shows the sessions you can see; run or session_open creates one by this name', 'listSessions shows the sessions you can see; runCommand creates one by this name'],
+  ['the id comes from a run or start result; session_list shows the Runs that have not ended', 'the id comes from a runCommand or launch result'],
+  ['(end the shell with session_close)', '(end the shell with killSession)'],
+  ['session_open starts a new shell under this name', 'runCommand starts a new shell under this name'],
+];
+
+/** Core advice in texts that reach a compat caller, in the compat profile's words. */
+export const compatWords = (text: string): string => COMPAT_ADVICE.reduce((t, [core, compat]) => t.replaceAll(core, compat), text);
 
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

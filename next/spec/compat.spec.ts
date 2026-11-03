@@ -180,6 +180,61 @@ test('defect 4: takeScreenshot with outputPath does not claim a file it never wr
   assert.equal(typeof shot.structured?.cols, 'number');
 });
 
+test('a missing session’s advice on the compat profile names the compat tools, not session_list, run or session_open', async () => {
+  const tail = await callTool('tailLogs', { session: 'no-such' }, { app, caller: A, resultText: 'json' }, compat);
+  assert.equal(tail.isError, true);
+  const sent = (await call('sendInput', { session: 'no-such', input: 'x' })) as unknown as { error: string };
+  for (const text of [tail.text, sent.error]) {
+    assert.doesNotMatch(text, /session_list|session_open|\brun or\b/, text);
+    assert.match(text, /listSessions shows the sessions you can see; runCommand creates one by this name/, text);
+  }
+});
+
+test('a missing Run’s advice on the compat profile names where a runId comes from there, not listSessions, which shows no Runs', async () => {
+  const r = await callTool('await', { runId: 'r1-000000' }, { app, caller: A, resultText: 'json' }, compat);
+  assert.equal(r.isError, true);
+  assert.match(r.text, /^run_not_found: run r1-000000 not found: the id comes from a runCommand or launch result, and a forgotten session's Runs are gone with it$/, r.text);
+});
+
+test('the compat profile rewords only whole advice: a session named like a core tool keeps its name, and the signal and closed-session refusals name killSession and runCommand', async () => {
+  const named = await callTool('tailLogs', { session: 'session_list' }, { app, caller: A, resultText: 'json' }, compat);
+  assert.equal(named.isError, true);
+  assert.match(named.text, /^session_not_found: session session_list not found: listSessions shows the sessions you can see; runCommand creates one by this name$/, named.text);
+  assert.equal((await call('runCommand', { session: 'advice', command: 'true' })).exitCode, 0);
+  const signalled = (await call('sendSignal', { session: 'advice', signal: 'SIGTERM' })) as unknown as { success: boolean; error: string };
+  assert.equal(signalled.success, false);
+  assert.match(signalled.error, /^no foreground job to receive SIGTERM: it would signal the session's shell itself \(end the shell with killSession\)$/, signalled.error);
+  await app.sessionClose(A, { session: 'advice' });
+  const sent = (await call('sendInput', { session: 'advice', input: 'x' })) as unknown as { success: boolean; error: string };
+  assert.equal(sent.success, false);
+  assert.match(sent.error, /^session advice was closed; its history is readable with read, and runCommand starts a new shell under this name$/, sent.error);
+});
+
+test('runCommand says when it stopped reading a Run’s output before its end', async () => {
+  let n = 0;
+  const stub = {
+    maxWaitMs: 55_000,
+    sessionSummary: () => undefined,
+    run: async () => ({ runId: 'r1', session: 's', state: 'exited', exit: 0, durationMs: 1, target: 'shell', cwd: '/', output: { text: '', truncated: false, seq: [1, 1], nextCursor: 1 } }),
+    read: async () => ({ session: 's', runId: 'r1', seq: [n, n + 1], nextCursor: ++n, more: true, truncated: false, text: 'x' }),
+  } as unknown as App;
+  const r = JSON.parse((await callTool('runCommand', { session: 's', command: 'flood' }, { app: stub, caller: A, resultText: 'json' }, compat)).text) as { output: string };
+  assert.match(r.output, /\n\[… later output not read: read \{"session": "s", "runId": "r1", "since": 4096\} to go on from here\]$/);
+});
+
+test('launch waits for its patterns 15 s, as 1.x polled them, and 2.5 s without', async () => {
+  const waits: Array<number | undefined> = [];
+  const stub = {
+    sessionSummary: () => undefined,
+    start: async (_c: Caller, o: { wait?: number }) => {
+      waits.push(o.wait);
+      throw new Error('stop here');
+    },
+  } as unknown as App;
+  for (const args of [{ readyPatterns: ['up'] }, { errorPatterns: ['FATAL'] }, {}]) await callTool('launch', { name: 'w', command: 'serve', ...args }, { app: stub, caller: A, resultText: 'json' }, compat);
+  assert.deepEqual(waits, [15_000, 15_000, 2_500]);
+});
+
 test('launch with cwd into an existing fish session groups the command as fish does, with begin and end', async () => {
   const typed: string[] = [];
   const stub = (flavor: 'fish' | 'posix') =>

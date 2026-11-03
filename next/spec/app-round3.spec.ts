@@ -15,7 +15,7 @@ import { clocks } from '../src/core/clock.js';
 import { cutPlumbing } from '../src/core/plumbing.js';
 import { serviceOutcomeKey } from '../src/core/session.js';
 import { SessionRegistry } from '../src/api/registry.js';
-import { callTool, TOOLS, type ResultText, type ToolResult } from '../src/api/tools.js';
+import { callTool, TOOLS, toolsFor, type ResultText, type ToolResult } from '../src/api/tools.js';
 import { validate } from '../src/api/validate.js';
 import { NodePtyBackend } from '../src/backends/node-pty.js';
 import { until } from './testhost.js';
@@ -29,7 +29,7 @@ const B: Caller = { principal: 'agent:b@test', connectionId: 'cb' };
 
 async function tool(name: string, args: Record<string, unknown>, caller: Caller = A, mode: ResultText = 'transcript'): Promise<ToolResult> {
   const def = TOOLS.find((t) => t.name === name)!;
-  const r = await callTool(name, args, { app, caller, resultText: mode }, TOOLS);
+  const r = await callTool(name, args, { app, caller, resultText: mode }, toolsFor('full'));
   if (r.isError) assert.equal(r.structured, undefined, `${name}: error results carry no envelope`);
   else if (def.outputSchema) validate(r.structured, def.outputSchema);
   return r;
@@ -256,15 +256,15 @@ test('a read whose result is never delivered leaves the read cursor where it was
   // only when the transport runs the result's onSent (the house's read of 1cabc6a, #22, comment 6263057673).
   const s = 'deliver';
   // B's Run writes output A has not read, in a shared session A may observe.
-  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
-  await callTool('run', { session: s, command: 'echo from-B' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
+  await callTool('run', { session: s, command: 'echo from-B' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
   const live = registry.get(s);
   assert.ok(live?.kind === 'live');
   const before = live.session.cursorsOf(A.principal).read;
   assert.equal(before, 0, 'A has read nothing yet');
   // A reads over a connection that can drop: deferReadDelivery, as the transport sets it.
   const deferred: Caller = { principal: A.principal, connectionId: 'a-ws', deferReadDelivery: true };
-  const r = await callTool('read', { session: s, since: 0 }, { app, caller: deferred, resultText: 'transcript' }, TOOLS);
+  const r = await callTool('read', { session: s, since: 0 }, { app, caller: deferred, resultText: 'transcript' }, toolsFor('full'));
   assert.match(r.text, /from-B/, 'the page carried the output');
   assert.equal(live.session.cursorsOf(A.principal).read, before, 'the result was not delivered: the cursor has not moved');
   assert.equal(typeof r.onSent, 'function');
@@ -279,7 +279,7 @@ test('78c4d6e 6: two deferred results outstanding at once leave the cursor at th
   // then committed together, A ends at Y's end — the target is decided at the commit, not when the
   // result was staged, where each froze a target below the other's unread output.
   const s = 'two-deferred';
-  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
   const x = await app.run(B, { session: s, command: 'echo X', wait: 5000 });
   const y = await app.run(B, { session: s, command: 'echo Y', wait: 5000 });
   assert.equal(x.state, 'exited');
@@ -301,7 +301,7 @@ test('78c4d6e 6: two deferred results outstanding at once leave the cursor at th
 
 test('G22: reverse-order Run reads remember the higher delivered range until the lower gap closes', async () => {
   const s = 'two-deferred-reverse';
-  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
   const x = await app.run(B, { session: s, command: 'echo X', wait: 5000 });
   const y = await app.run(B, { session: s, command: 'echo Y', wait: 5000 });
   assert.equal(x.state, 'exited');
@@ -330,7 +330,7 @@ test('G22: reverse-order Run reads remember the higher delivered range until the
 
 test('G22: a remembered higher Run cannot carry read past a third, still-unread Run', async () => {
   const s = 'three-deferred-gap';
-  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
   const x = await app.run(B, { session: s, command: 'echo X', wait: 5000 });
   const y = await app.run(B, { session: s, command: 'echo Y', wait: 5000 });
   const z = await app.run(B, { session: s, command: 'echo Z', wait: 5000 });
@@ -349,7 +349,7 @@ test('G22: a remembered higher Run cannot carry read past a third, still-unread 
 
 test('G22: a session-level page closes an unread Run gap and joins a higher delivered Run', async () => {
   const s = 'session-bridges-run-gap';
-  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
   const x = await app.run(B, { session: s, command: 'echo X', wait: 5000 });
   const y = await app.run(B, { session: s, command: 'echo Y-DELIVERED-ONLY', wait: 5000 });
   const live = registry.get(s);
@@ -368,7 +368,7 @@ test('G22: a session-level page closes an unread Run gap and joins a higher deli
 
 test('G22: a first page of one Run leaves its remaining output unread below a higher delivered Run', async () => {
   const s = 'partial-run-gap';
-  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s, visibility: 'shared' }, { app, caller: B, resultText: 'transcript' }, toolsFor('full'));
   const x = await app.run(B, { session: s, command: `awk 'BEGIN { for (i = 0; i < 5000; i++) printf "X"; printf "\\nX-END\\n" }'`, wait: 5000 });
   const y = await app.run(B, { session: s, command: 'echo Y', wait: 5000 });
   const live = registry.get(s);
@@ -433,7 +433,7 @@ test('G22/G16: a keyed Run replay carries its own deferred read commit', async (
 
 test('78c4d6e: run, await, start and screen advance a deferred caller’s read cursor only once their result is written', async () => {
   const s = 'deferred-tools';
-  await callTool('session_open', { session: s }, { app, caller: A, resultText: 'transcript' }, TOOLS);
+  await callTool('session_open', { session: s }, { app, caller: A, resultText: 'transcript' }, toolsFor('full'));
   const live = registry.get(s);
   assert.ok(live?.kind === 'live');
   const deferred: Caller = { principal: A.principal, connectionId: 'a-ws-tools', deferReadDelivery: true };
@@ -441,7 +441,7 @@ test('78c4d6e: run, await, start and screen advance a deferred caller’s read c
 
   const commits = async (name: string, args: Record<string, unknown>, shown: string): Promise<void> => {
     const before = cur();
-    const r = await callTool(name, args, { app, caller: deferred, resultText: 'transcript' }, TOOLS);
+    const r = await callTool(name, args, { app, caller: deferred, resultText: 'transcript' }, toolsFor('full'));
     assert.equal(r.isError, undefined, `${name}: ${r.text}`);
     assert.match(r.text, new RegExp(shown), `${name}: the result returned new output`);
     assert.equal(cur(), before, `${name}: nothing committed before the write`);
@@ -451,7 +451,7 @@ test('78c4d6e: run, await, start and screen advance a deferred caller’s read c
   };
 
   await commits('run', { session: s, command: 'echo one' }, 'one');
-  const two = await callTool('run', { session: s, command: 'echo two' }, { app, caller: deferred, resultText: 'transcript' }, TOOLS);
+  const two = await callTool('run', { session: s, command: 'echo two' }, { app, caller: deferred, resultText: 'transcript' }, toolsFor('full'));
   assert.equal(two.isError, undefined, two.text);
   assert.equal(typeof two.onSent, 'function');
   // The prior run response stays unwritten: await is the first result that shows its output.

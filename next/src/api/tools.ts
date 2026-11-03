@@ -11,7 +11,7 @@ import { headOnlyText } from '../core/regex.js';
 import type { Seq } from '../core/types.js';
 import { commitReadDelivery, type App, type Caller, type ReadResult, type RunResult, type SearchResult, type SessionSummary } from './app.js';
 import { clippedText, gapsText, type GapInfo } from './reader.js';
-import { COMPAT_TOOLS } from './compat.js';
+import { COMPAT_TOOLS, compatWords } from './compat.js';
 import { looksLikeErrexit, looksLikeShellOpener, oneShotSshWithoutTty } from './hints.js';
 import { validate, ValidationError, type Schema } from './validate.js';
 
@@ -1005,7 +1005,8 @@ export async function callTool(name: string, args: Record<string, unknown>, ctx:
     return await tool.run(ctx, args ?? {});
   } catch (e) {
     if (e instanceof ValidationError) return { text: `invalid_argument: ${e.message}`, isError: true };
-    if (e instanceof TermError) return { text: `${e.code}: ${e.message}`, isError: true };
+    const words = available.some((t) => t.tier === 'compat') ? compatWords : (text: string) => text;
+    if (e instanceof TermError) return { text: `${e.code}: ${words(e.message)}`, isError: true };
     const msg = e instanceof Error ? e.message : String(e);
     return { text: `internal: ${msg}`, isError: true };
   }
