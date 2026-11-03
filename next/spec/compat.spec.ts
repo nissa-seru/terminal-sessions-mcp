@@ -659,7 +659,7 @@ test('the 38 commits 5: a queued shell Run does not turn shape-only cutting on w
   await call('killSession', { session: 'qshape', graceful: false });
 });
 
-test('6270946953: launch’s watch for error patterns is measured on the monotonic clock: a wall-clock jump neither ends it early nor stretches it', async (t) => {
+test('6270946953: launch’s watch for error patterns is measured on the monotonic clock: a wall-clock jump forward does not end it early', async (t) => {
   const real = Date.now.bind(Date);
   let lag = 0;
   t.mock.method(Date, 'now', () => real() + lag);
