@@ -15,7 +15,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 interface StaticAsset {
-  /** Absolute path on disk, or undefined when it could not be resolved (served as 404). */
+  /** Absolute path on disk, or undefined when it could not be resolved (served as 500). */
   file: string | undefined;
   type: string;
 }
