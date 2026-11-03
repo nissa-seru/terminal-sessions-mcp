@@ -621,7 +621,7 @@ export const COMPAT_TOOLS: ToolDef[] = [
     description:
       'Run a command in a session (auto-creates the session if it does not exist). Calls to one session run one after another. ' +
       'Waits at most 55 s: a longer command returns state "running" with its runId — `await {"runId": …}` gets its exit code later, tailLogs shows its progress. ' +
-      'When a command opened another shell — `ssh host`, `sudo -i`, `docker exec -it … bash`, a nested `bash` — declare it once with session_declare_shell {"session": …}: ' +
+      'When a command opened another shell — `ssh host`, `sudo -i`, `docker exec -it … bash`, a nested `bash` — declare it once with session_declare_shell {"session": …}, adding "shell": "fish" when it is fish: ' +
       'runCommand then goes to that shell (output and exit code as usual) until that command ends. Without the declaration, a command is not queued behind one that looks like it opened a shell: the result says so and nothing runs.',
     inputSchema: {
       type: 'object',
@@ -650,7 +650,7 @@ export const COMPAT_TOOLS: ToolDef[] = [
         const b = r.busy;
         const error = opener
           ? `session ${session} is running ${opener.runId} (${opener.line ?? ''}), which looks like a command that opened another shell; nothing was run, since a command queued behind it would run in the session's own shell once it ends, not in that one. ` +
-            `If it is a shell (ssh, sudo -i, a nested shell), declare it once with session_declare_shell {"session": "${session}"} and call runCommand again: commands then go to that shell, with their output and exit code. ` +
+            `If it is a shell (ssh, sudo -i, a nested shell), declare it once with session_declare_shell {"session": "${session}"}, adding "shell": "fish" when it is fish, and call runCommand again: commands then go to that shell, with their output and exit code. ` +
             `To run after it ends instead, await {"runId": "${opener.runId}"} first.`
           : `session ${r.session} is busy${b?.runId ? ` running ${b.runId}` : ''} (${b?.reason ?? 'busy'}); nothing was run: ${BUSY_NEXT[b?.reason ?? ''] ?? 'try again when it is done, or use another session'}`;
         return json({ output: '', exitCode: -1, duration: 0, state: 'busy', busy: r.busy, error });
@@ -663,7 +663,7 @@ export const COMPAT_TOOLS: ToolDef[] = [
       }
       if (r.state === 'running' || r.state === 'starting') {
         // A hint, never evidence (§8.1): the line reads like one that opens another shell.
-        const opened = r.shell === undefined && looksLikeShellOpener(r.line) ? `. If it opened a shell (it looks like it did), declare that with session_declare_shell {"session": "${r.session}"} before the next runCommand: commands then go to that shell instead of waiting behind it` : '';
+        const opened = r.shell === undefined && looksLikeShellOpener(r.line) ? `. If it opened a shell (it looks like it did), declare that with session_declare_shell {"session": "${r.session}"}, adding "shell": "fish" when it is fish, before the next runCommand: commands then go to that shell instead of waiting behind it` : '';
         res.note = `still running (it was not interrupted): await {"runId": "${r.runId}"} gets its exit code; tailLogs shows its output${opened}`;
       }
       if (r.state === 'queued') res.note = `queued behind the running command: it runs in the session's own shell when that ends; await {"runId": "${r.runId}"} gets its exit code`;
