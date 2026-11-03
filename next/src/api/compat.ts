@@ -34,7 +34,12 @@ const anyOf = (patterns: unknown): string | undefined => {
 };
 
 /** Core tool names in texts that reach a compat caller, in the compat profile's words. */
-const compatWords = (text: string): string => text.replace(/\bsession_close\b/g, 'killSession').replace(/\bsession_open\b/g, 'runCommand');
+export const compatWords = (text: string): string =>
+  text
+    .replace(/\bsession_close\b/g, 'killSession')
+    .replace(/\brun or session_open\b/g, 'runCommand')
+    .replace(/\bsession_open\b/g, 'runCommand')
+    .replace(/\bsession_list\b/g, 'listSessions');
 
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));

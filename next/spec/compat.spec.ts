@@ -180,6 +180,16 @@ test('defect 4: takeScreenshot with outputPath does not claim a file it never wr
   assert.equal(typeof shot.structured?.cols, 'number');
 });
 
+test('a missing session’s advice on the compat profile names the compat tools, not session_list, run or session_open', async () => {
+  const tail = await callTool('tailLogs', { session: 'no-such' }, { app, caller: A, resultText: 'json' }, compat);
+  assert.equal(tail.isError, true);
+  const sent = (await call('sendInput', { session: 'no-such', input: 'x' })) as unknown as { error: string };
+  for (const text of [tail.text, sent.error]) {
+    assert.doesNotMatch(text, /session_list|session_open|\brun or\b/, text);
+    assert.match(text, /listSessions shows the sessions you can see; runCommand creates one by this name/, text);
+  }
+});
+
 test('launch with cwd into an existing fish session groups the command as fish does, with begin and end', async () => {
   const typed: string[] = [];
   const stub = (flavor: 'fish' | 'posix') =>
