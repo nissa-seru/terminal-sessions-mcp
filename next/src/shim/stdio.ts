@@ -583,7 +583,7 @@ interface Grant {
   seq: number;
   unanswered?: true;
 }
-const replay: { initialize?: Parsed; initialized?: Parsed; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, Parsed> } = {
+const replay: { initialize?: Parsed; initialized?: Parsed; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, { m: Parsed; seq: number }> } = {
   refused: [],
   reduced: new Map(),
   channels: new Map(),
@@ -644,10 +644,10 @@ function answered(p: Pending, m: Parsed): void {
   if (m.error !== undefined) return; // the host saw the refusal; its picture is as before
   if (p.method === 'initialize') {
     replay.initialize = p.m;
-    delete replay.grant;
-    replay.refused = [];
-    replay.reduced.clear();
-    replay.channels.clear();
+    if (replay.grant && replay.grant.seq < p.seq) delete replay.grant;
+    replay.refused = replay.refused.filter((r) => r.seq > p.seq);
+    for (const [n, at] of replay.reduced) if (at < p.seq) replay.reduced.delete(n);
+    for (const [channel, c] of replay.channels) if (c.seq < p.seq) replay.channels.delete(channel);
   } else if (p.method === 'channels/open') opened(p, m);
   else if (p.method === 'channels/close' && isObj(p.m.params) && typeof p.m.params.channelId === 'string') closed(p.m.params.channelId, p.seq);
 }
@@ -699,7 +699,7 @@ function opened(p: Pending, m: Parsed): void {
   if ((closedAt.get(channel) ?? -1) > p.seq) return;
   closedAt.delete(channel);
   const { history: _history, historyLimit: _limit, ...again } = p.m.params;
-  replay.channels.set(channel, { jsonrpc: '2.0', method: 'channels/open', params: { ...again, channelId: channel } } as Parsed);
+  replay.channels.set(channel, { m: { jsonrpc: '2.0', method: 'channels/open', params: { ...again, channelId: channel } } as Parsed, seq: p.seq });
 }
 
 function closed(channel: string, at: number): void {
@@ -1039,7 +1039,7 @@ function replayState(sock: WebSocket): void {
   if (replay.grant) items.push({ m: replay.grant.m, request: true, method: 'featureSets/update' });
   for (const r of replay.refused) items.push({ m: r.m, request: true, method: 'featureSets/update', ...(r.unanswered ? { unanswered: true as const } : { refusedBefore: true as const }) });
   if (replay.reduced.size) items.push({ m: { jsonrpc: '2.0', method: 'featureSets/update', params: { disabled: [...replay.reduced.keys()] } } as Parsed, request: false, method: 'featureSets/update' });
-  for (const [channel, m] of replay.channels) items.push({ m, request: true, method: 'channels/open', channel });
+  for (const [channel, { m }] of replay.channels) items.push({ m, request: true, method: 'channels/open', channel });
   replaying = { items, next: 0, outstanding: 0, sock };
   pumpReplay();
 }

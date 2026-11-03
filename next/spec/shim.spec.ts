@@ -684,6 +684,39 @@ test('tg-19: an initialize the daemon answered starts the replayed picture over:
   }
 });
 
+test('tg-19: an initialize answered after later requests starts the replayed picture over only for what came before it: a grant, a reduction and a channel sent after it stay', async () => {
+  const p = await peer((c, m) => {
+    if (c.index === 0 && m.id === 2) return undefined;
+    return m.method === 'channels/open' ? { result: { channel: { id: 'terminal:k2' } } } : { result: {} };
+  });
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    s.send(initMcpl(2));
+    s.send({ jsonrpc: '2.0', id: 3, method: 'featureSets/update', params: { effectiveCapabilities: ['tools', 'channels.lifecycle'] } });
+    await s.next(byId(3));
+    s.send({ jsonrpc: '2.0', method: 'featureSets/update', params: { disabled: ['terminal.live'] } });
+    s.send({ jsonrpc: '2.0', id: 4, method: 'channels/open', params: { address: { session: 'k2' } } });
+    await s.next(byId(4));
+    p.conns[0]!.ws.send(JSON.stringify({ jsonrpc: '2.0', id: 2, result: {} }));
+    await s.next(byId(2));
+    p.conns[0]!.ws.terminate();
+    await until(() => p.conns[1]?.frames.some((f) => f.method === 'initialize') ?? false, 5000, 'the shim to reconnect and replay');
+    s.send({ jsonrpc: '2.0', id: 5, method: 'ping' });
+    assert.deepEqual((await s.next(byId(5))).result, {});
+    const frames = p.conns[1]!.frames;
+    assert.deepEqual(frames.map((f) => f.method), ['initialize', 'featureSets/update', 'featureSets/update', 'channels/open', 'ping'], 'the second initialize, then what was sent after it, then the queue');
+    assert.deepEqual(frames[2]!.params, { disabled: ['terminal.live'] });
+    assert.equal(frames[2]!.id, undefined, 'the reduction as a notification');
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 /** A TCP server that accepts, reads and never answers: a stalled handshake. */
 function silentServer(): Promise<{ port: number; accepted(): number; close(): void }> {
   const socks = new Set<net.Socket>();
