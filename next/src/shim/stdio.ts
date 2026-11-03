@@ -577,7 +577,8 @@ interface Grant {
   m: Parsed;
   seq: number;
 }
-const replay: { initialize?: Parsed; initialized?: Parsed; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, Parsed> } = {
+const replay: { initialize?: Parsed; initialized?: Parsed; since: number; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, { m: Parsed; seq: number }> } = {
+  since: 0,
   refused: [],
   reduced: new Map(),
   channels: new Map(),
@@ -635,8 +636,15 @@ function noteNotification(m: Parsed, seq: number): void {
 function answered(p: Pending, m: Parsed): void {
   if (p.method === 'featureSets/update') return grantAnswered(p, m);
   if (m.error !== undefined) return; // the host saw the refusal; its picture is as before
-  if (p.method === 'initialize') replay.initialize = p.m;
-  else if (p.method === 'channels/open') opened(p, m);
+  if (p.method === 'initialize') {
+    if (p.seq < replay.since) return;
+    replay.since = p.seq;
+    replay.initialize = p.m;
+    if (replay.grant && replay.grant.seq < p.seq) delete replay.grant;
+    replay.refused = replay.refused.filter((r) => r.seq > p.seq);
+    for (const [n, at] of replay.reduced) if (at < p.seq) replay.reduced.delete(n);
+    for (const [channel, c] of replay.channels) if (c.seq < p.seq) replay.channels.delete(channel);
+  } else if (p.method === 'channels/open') opened(p, m);
   else if (p.method === 'channels/close' && isObj(p.m.params) && typeof p.m.params.channelId === 'string') closed(p.m.params.channelId, p.seq);
 }
 
@@ -651,6 +659,7 @@ function answered(p: Pending, m: Parsed): void {
  * Refused without running (the in-flight bound says `executed: false`), it changed nothing.
  */
 function grantAnswered(p: Pending, m: Parsed): void {
+  if (p.seq < replay.since) return;
   if (m.error === undefined) {
     replay.grant = { m: p.m, seq: p.seq };
     replay.refused = replay.refused.filter((r) => r.seq > p.seq);
@@ -671,13 +680,13 @@ function grantAnswered(p: Pending, m: Parsed): void {
 /** A channels/open the daemon accepted: remember the channel (by the id the daemon gave it) until the host closes it. */
 function opened(p: Pending, m: Parsed): void {
   const channel = isObj(m.result) && isObj(m.result.channel) ? m.result.channel.id : undefined;
-  if (typeof channel !== 'string' || !isObj(p.m.params)) return;
+  if (typeof channel !== 'string' || !isObj(p.m.params) || p.seq < replay.since) return;
   // A close the host sent after this open stands — it can, since it can predict the channel's id —
   // and the open's late answer does not undo it (the house's read of 4e37a11, #22).
   if ((closedAt.get(channel) ?? -1) > p.seq) return;
   closedAt.delete(channel);
   const { history: _history, historyLimit: _limit, ...again } = p.m.params;
-  replay.channels.set(channel, { jsonrpc: '2.0', method: 'channels/open', params: { ...again, channelId: channel } } as Parsed);
+  replay.channels.set(channel, { m: { jsonrpc: '2.0', method: 'channels/open', params: { ...again, channelId: channel } } as Parsed, seq: p.seq });
 }
 
 function closed(channel: string, at: number): void {
@@ -1009,7 +1018,7 @@ function replayState(sock: WebSocket): void {
   if (replay.grant) items.push({ m: replay.grant.m, request: true, method: 'featureSets/update' });
   for (const r of replay.refused) items.push({ m: r.m, request: true, method: 'featureSets/update', refusedBefore: true });
   if (replay.reduced.size) items.push({ m: { jsonrpc: '2.0', method: 'featureSets/update', params: { disabled: [...replay.reduced.keys()] } } as Parsed, request: false, method: 'featureSets/update' });
-  for (const [channel, m] of replay.channels) items.push({ m, request: true, method: 'channels/open', channel });
+  for (const [channel, { m }] of replay.channels) items.push({ m, request: true, method: 'channels/open', channel });
   replaying = { items, next: 0, outstanding: 0, sock };
   pumpReplay();
 }
