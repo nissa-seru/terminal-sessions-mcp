@@ -1495,7 +1495,7 @@ test('2f357bd-2: a detach naming a session that does not exist keeps nothing on 
   }
 });
 
-test('2f357bd-3: a reply is in flight until written, so a client that stops reading is refused once the limit of replies waits for it, and the queue stays bounded', async () => {
+test('2f357bd-3: a reply is in flight until written, so a client that stops reading is refused once the limit of replies waits for it', async () => {
   const LIMIT = 8;
   const h = await start({ maxInFlight: LIMIT });
   try {
@@ -1521,7 +1521,7 @@ test('2f357bd-3: a reply is in flight until written, so a client that stops read
     let handled = 0;
     conn.ws.on('message', () => handled++);
     // Now every reply waits on the socket: the limit of them, and a small refusal for each request past it.
-    const N = 1500;
+    const N = 2 * LIMIT;
     for (let i = 0; i < N; i++) c.raw(JSON.stringify({ jsonrpc: '2.0', id: 1000 + i, method: 'tools/list' }));
     await until(() => handled === N, 5000, 'every request to be taken in');
     assert.equal(conn.inFlight, LIMIT, 'no more than the limit is in flight while nothing is written');
@@ -1540,6 +1540,57 @@ test('2f357bd-3: a reply is in flight until written, so a client that stops read
     assert.deepEqual(refused[0]!.error!.data, { limit: LIMIT, executed: false });
     assert.match(refused[0]!.error!.message, /not run/);
     c.close();
+  } finally {
+    await h.close();
+  }
+});
+
+test('a client that keeps sending while it reads nothing is ended once the limit of refusals waits for it too, so what waits for it stays bounded however much it sends', async () => {
+  const LIMIT = 8;
+  for (const what of ['requests past the limit', 'frames that do not parse'] as const) {
+    const h = await start({ maxInFlight: LIMIT });
+    try {
+      const c = await Client.open(h.port, { profile: 'full' });
+      let ended = false;
+      void c.closed.then(() => (ended = true));
+      const conn = [...conns(h.server)][0]!;
+      const one = JSON.stringify(await c.request('tools/list')).length;
+      const sock = (conn.ws as unknown as { _socket: net.Socket })._socket;
+      sock.cork();
+      const base = conn.ws.bufferedAmount;
+      let peak = 0;
+      conn.ws.on('message', () => (peak = Math.max(peak, conn.ws.bufferedAmount - base)));
+      for (let i = 0; i < 1500; i++) c.raw(what === 'frames that do not parse' ? '{' : JSON.stringify({ jsonrpc: '2.0', id: 1000 + i, method: 'tools/list' }));
+      await until(() => ended, 5000, `the server to end the connection (${what})`);
+      const bound = (what === 'requests past the limit' ? LIMIT * one : 0) + LIMIT * 400;
+      assert.ok(peak < bound, `${what}: ${peak} bytes waited, against ${bound}`);
+      assert.ok(h.logs.some((l) => l.msg === 'ended a connection that reads none of its replies' && l.limit === LIMIT), what);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test('a client that reads its replies and sends many past the limit in one packet gets every answer, refusals included, and stays connected', async () => {
+  const LIMIT = 8;
+  const h = await start({ maxInFlight: LIMIT });
+  try {
+    const c = await Client.open(h.port, { profile: 'full' });
+    await c.request('tools/list');
+    let ended = false;
+    void c.closed.then(() => (ended = true));
+    const N = 3 * LIMIT;
+    const answered = () => c.inbound.filter((m) => typeof m.id === 'number' && m.id >= 5000).length;
+    const sock = (c.ws as unknown as { _socket: net.Socket })._socket;
+    sock.cork();
+    for (let i = 0; i < N; i++) c.raw(JSON.stringify({ jsonrpc: '2.0', id: 5000 + i, method: 'tools/list' }));
+    sock.uncork();
+    await until(() => ended || answered() === N, 5000, 'every answer, or the end of the connection');
+    assert.equal(ended, false, 'the connection stays open');
+    assert.equal(answered(), N);
+    const refused = c.inbound.filter((m) => typeof m.id === 'number' && m.id >= 5000 && (m.error?.data as { executed?: boolean } | undefined)?.executed === false).length;
+    assert.ok(refused > 0, 'premise: the burst went past the limit, so some of it was refused');
+    assert.ok(!h.logs.some((l) => l.msg === 'ended a connection that reads none of its replies'));
   } finally {
     await h.close();
   }
