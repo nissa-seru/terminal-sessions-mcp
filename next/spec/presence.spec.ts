@@ -198,6 +198,17 @@ test('late output of a process Run’s background child is news, not a prompt re
   assert.match(text, /late: idle \(cwd .*\) · \d+ B new since your last read \(read since=\d+\)/);
 });
 
+test('a closed session holding output its reader has not read is news, though no Run ended after the cursor', async () => {
+  await app.sessionOpen(A, { id: 'late-closed' });
+  const r = await app.run(A, { session: 'late-closed', command: "sh -c '(sleep 0.4; echo late-line) & exit 0'", target: 'process' });
+  assert.equal(r.state, 'exited');
+  const s = live('late-closed');
+  await until(() => s.journal.tail(50).some((e) => e.type === 'output' && e.runId === undefined && e.stream === 'stdout' && e.data.includes('late-line')), 4000, 'the late line');
+  await app.sessionClose(A, { session: 'late-closed' });
+  assert.equal(registry.get('late-closed')?.kind, 'history');
+  assert.match(P(A, ['late-closed']), /late-closed: closed · \d+ B of output you have not read \(read since=\d+\)/);
+});
+
 test('a human typing is news; the reader’s own typing and protocol replies are not', async () => {
   const H: Caller = { principal: 'human:test:1', connectionId: 'ph' };
   await app.sessionOpen(A, { id: 'typed', visibility: 'shared' });
