@@ -1582,6 +1582,22 @@ test('atc-6/ux-15: the 1.x settings reach the daemon they name, TSM_* wins, and 
   }
 });
 
+test("atc-6: an address where 1.x's session server answers initialize in its own frame gets the host a JSON-RPC error naming it and TSM_URL, and the shim stops", async () => {
+  const p = await peer(() => ({ jsonrpc: undefined, error: 'Unknown method: initialize' }) as unknown as Answer);
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    const r = await s.next(byId(1));
+    assert.equal(r.jsonrpc, '2.0');
+    assert.equal(r.error?.code, -32000);
+    assert.match(r.error?.message ?? '', /without JSON-RPC 2\.0.*1\.x's session server.*TSM_URL/);
+    assert.equal(await exitWithin(s), 1);
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 test('a shim credential follows the selected daemon address family', async () => {
   const d = await daemon(0, undefined, { 'tok-1x': 'agent:old@x', 'tok-2x': 'agent:new@x' });
   try {

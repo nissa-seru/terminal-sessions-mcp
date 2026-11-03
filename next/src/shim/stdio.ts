@@ -28,6 +28,9 @@
  *    since the last accepted grant — goes in bounded windows, its
  *    answers are swallowed, and a refusal is logged. What expires in the queue
  *    is logged once per pass, by count and method.
+ *  - An answer to the host's `initialize` that is not JSON-RPC 2.0, as 1.x's
+ *    session server gives, is not termd's: the host gets -32000 saying so, and
+ *    the shim exits 1.
  *  - When the URL is a plain ws:// loopback address and nothing listens, it
  *    starts termd — detached, same port, logging to <data-dir>/termd.log
  *    (rotated), its stderr kept in <data-dir>/termd.stderr.log — unless
@@ -79,6 +82,7 @@ import { launchctlUnit, nextStart, plistUnit, procEnviron, sameDir, systemctlUni
 
 type Id = string | number;
 interface Parsed {
+  jsonrpc?: unknown;
   id?: unknown;
   method?: unknown;
   params?: unknown;
@@ -735,6 +739,14 @@ function flushQueue(): void {
   maybeFinish();
 }
 
+function notTermd(p: Pending, m: Parsed): void {
+  const said = typeof m.error === 'string' ? ` (it said: ${m.error.slice(0, 200)})` : '';
+  const message = `${target} answered initialize without JSON-RPC 2.0${said}: it is not termd, and may be 1.x's session server, which this shim cannot use; point TSM_URL at 2.0's termd (port 3101 by default)`;
+  log(message);
+  failRequest(p.id, message);
+  exit(1);
+}
+
 function maybeFinish(): void {
   if (!stdinClosed || finishing) return;
   if (queue.length || inflight.size) return;
@@ -1106,6 +1118,7 @@ function connect(): void {
       const p = inflight.get(key(m.id));
       if (p) {
         inflight.delete(key(m.id));
+        if (p.method === 'initialize' && m.jsonrpc !== '2.0') return notTermd(p, m);
         answered(p, m);
         pruneClosed();
       }
