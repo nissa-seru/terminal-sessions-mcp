@@ -52,7 +52,7 @@ async function pagesBack(src: ReadSource, o: ReadOptions): Promise<ReadResult[]>
   assert.fail('following lines.before ends');
 }
 
-test('a marker Run read in pages of every size shows its own lines alone, and the pages join to them', async () => {
+test('a marker Run read in pages of three sizes shows its own lines alone, and the pages join to them', async () => {
   const lines = Array.from({ length: 120 }, (_, i) => `line ${i} ${'x'.repeat(1 + (i % 40))}`);
   for (const maxBytes of [1024, 2048, 16384]) {
     const src = source();
