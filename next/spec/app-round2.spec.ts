@@ -128,6 +128,20 @@ test('G16: a keyed run retried after a restart is the same Run, never a second e
   }
 });
 
+test('G16: a replay after the session was forgotten and its name retaken privately by another principal returns the first outcome', async () => {
+  const k = `kp-${Date.now()}`;
+  const first = await tool('run', { session: 'forg-p', command: 'echo gone', idempotencyKey: k });
+  assert.equal(first.structured?.state, 'exited');
+  await tool('session_close', { session: 'forg-p', forget: true });
+  const taken = await tool('session_open', { session: 'forg-p' }, B);
+  assert.equal(taken.isError, undefined, `premise: B took the name: ${taken.text}`);
+  const again = await tool('run', { session: 'forg-p', command: 'echo gone', idempotencyKey: k });
+  assert.equal(again.isError, undefined, again.text);
+  assert.equal(again.structured?.replayed, true);
+  assert.equal(again.structured?.runId, first.structured?.runId);
+  await tool('session_close', { session: 'forg-p', forget: true }, B);
+});
+
 for (const [verb, act] of [
   ['signal', (session: string, C: Caller) => tool('signal', { session }, C)],
   ['resize', (session: string, C: Caller) => tool('resize', { session, cols: 100, rows: 30 }, C)],

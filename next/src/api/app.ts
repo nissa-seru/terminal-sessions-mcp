@@ -818,9 +818,9 @@ export class App {
     try {
       again = await this.awaitRun(caller, { session: prev.session, runId: prev.runId, ...(wait !== undefined ? { wait } : {}) });
     } catch (e) {
-      // The session was forgotten since: the first outcome is all there is (atc-21), and its text went with
-      // the session — the empty text is a cut, and says so (the house's read of 1cabc6a, #22).
-      if (e instanceof TermError && (e.code === 'session_not_found' || e.code === 'run_not_found')) return { ...prev, replayed: true, output: { ...prev.output, truncated: true } };
+      // The session was forgotten or is no longer the caller's to observe: the first outcome is all there is
+      // (atc-21), and the empty text is a cut, and says so (the house's read of 1cabc6a, #22).
+      if (e instanceof TermError && (e.code === 'session_not_found' || e.code === 'run_not_found' || e.code === 'forbidden')) return { ...prev, replayed: true, output: { ...prev.output, truncated: true } };
       throw e;
     }
     // awaitRun made a fresh result. Keep that object so its nonenumerable read commit
