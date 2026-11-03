@@ -501,8 +501,9 @@ export class SessionRegistry {
    * Surface journals left by a previous daemon as history-only sessions. Each
    * journal is streamed once (run lifecycle events only); nothing holds a whole
    * journal in memory. Runs still open are ended `lost` — after the process
-   * groups the dead daemon left running have been terminated, all sessions'
-   * together, within about 2.5 s (jr2-4). A session past its retention is
+   * groups the dead daemon left running have been terminated, or left running
+   * where recovery can't tie them to the Run, all sessions' together, within
+   * about 2.5 s (jr2-4). A session past its retention is
    * removed only after that: its Runs' groups are ended like any other's, and
    * one whose groups no process listing judged is kept until a recovery does.
    */
