@@ -239,6 +239,18 @@ test('G17: a queued Run whose principal left and whose seat lapsed is typed into
   await h.session.close();
 });
 
+test('G17: under owner-priority, a Run waiting out the shell\'s startup does not take the seat back for its owner from whoever took it meanwhile', async () => {
+  const h = await harness({ control: 'owner-priority', promptAtStart: false, hello: false, integrationGraceMs: 30, startupCapMs: 150 });
+  const pending = h.session.admitWhenAvailable({ target: 'shell', line: 'echo waited', principal: AGENT }, 2000);
+  h.session.releaseControl(AGENT);
+  h.session.attach(HUMAN, 'c2', 'controller');
+  h.shell.start();
+  await assert.rejects(pending, (e: unknown) => (e as { code?: string }).code === 'not_controller');
+  assert.equal(h.session.currentController, HUMAN, 'the seat stays with whoever holds it');
+  assert.equal(h.session.listRuns().some((run) => run.line === 'echo waited'), false, 'no Run was admitted');
+  await h.session.close();
+});
+
 test('G17: under owner-priority, the owner\'s queued Run does not take the seat back from whoever took it while the Run waited', async () => {
   const owner = 'agent:owner@test';
   const h = await harness({ owner, attachOwner: false, control: 'owner-priority' });

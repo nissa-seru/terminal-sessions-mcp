@@ -1959,9 +1959,9 @@ export class Session {
    */
   async admitWhenAvailable(opts: AdmitOptions | (() => AdmitOptions), settleMs = 1500): Promise<AdmitResult> {
     const deadline = clocks.monotonic() + settleMs;
-    for (;;) {
+    for (let again = false; ; again = true) {
       // A waiting caller may need to render for the shell in front now, not the one before the wait.
-      const a = this.admit(typeof opts === 'function' ? opts() : opts);
+      const a = this.admitOnce(typeof opts === 'function' ? opts() : opts, again);
       if (a.admitted || (a.reason !== 'prompt-pending' && a.reason !== 'cancel-unanswered' && a.reason !== 'starting')) return a;
       const remaining = deadline - clocks.monotonic();
       if (remaining <= 0) return a;
@@ -1971,7 +1971,14 @@ export class Session {
 
   /** Admit a Run (G1, G4). Shell Runs need availability; process Runs never occupy the shell. */
   admit(opts: AdmitOptions): AdmitResult {
-    if (!opts.internal && opts.principal !== SYSTEM && this.control !== 'open') this.requireSeat(opts.principal, 'run', { asOwner: opts.asOwner === true });
+    return this.admitOnce(opts, false);
+  }
+
+  private admitOnce(opts: AdmitOptions, again: boolean): AdmitResult {
+    if (!opts.internal && opts.principal !== SYSTEM && this.control !== 'open') {
+      if (again) this.recheckSeat(opts.principal, 'run', { asOwner: opts.asOwner === true });
+      else this.requireSeat(opts.principal, 'run', { asOwner: opts.asOwner === true });
+    }
     const origin = opts.origin ?? (opts.principal === SYSTEM ? 'system' : 'self');
     if (opts.target === 'process') {
       this.assertAlive();
