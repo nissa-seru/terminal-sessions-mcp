@@ -372,8 +372,10 @@ test("the ask has one deadline for the whole exchange and reads at most 1 MiB, h
     asked++;
     res.writeHead(200, { 'content-type': 'application/json' });
     let i = 0;
-    const t = setInterval(() => (i < body.length ? (res.write(body[i++]!), wrote++) : (clearInterval(t), res.end())), 200);
+    const step = () => (i < body.length ? (res.write(body[i++]!), wrote++) : (clearInterval(t), res.end()));
+    const t = setInterval(step, 200);
     timers.add(t);
+    step();
     req.on('close', () => clearInterval(t));
   });
   const flood = http.createServer((_req, res) => {
