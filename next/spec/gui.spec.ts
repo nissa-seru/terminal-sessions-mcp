@@ -827,6 +827,51 @@ test('2f357bd: ^C interrupts the foreground job; Close asks twice; the activity 
   }
 });
 
+test('^C and the seat button clicked while another session attaches are not sent, and say so, as typed input is (tsg-7)', async (t) => {
+  if (skip || !browser) return t.skip(skip || 'no browser');
+  const a = await agent();
+  await a.call('session_open', { session: 'hx', visibility: 'shared' });
+  await a.call('session_open', { session: 'hy', visibility: 'shared' });
+  type Attach = (...args: unknown[]) => Promise<unknown>;
+  const native = server as unknown as { nativeAttach: Attach };
+  const attachNow = native.nativeAttach.bind(server);
+  let held = false;
+  let entered!: () => void;
+  const attaching = new Promise<void>((r) => (entered = r));
+  let release!: () => void;
+  const released = new Promise<void>((r) => (release = r));
+  native.nativeAttach = async (...args) => {
+    if (held) {
+      entered();
+      await released;
+    }
+    return attachNow(...args);
+  };
+  const problems: string[] = [];
+  const page = await openGui(`http://127.0.0.1:${port}/?token=tg`, problems);
+  try {
+    await pick(page, 'hx');
+    await page.waitForFunction(`${rows}.includes('$')`, { timeout: 10_000 });
+    await takeSeat(page, a, 'hx');
+    held = true;
+    await pick(page, 'hy');
+    await attaching;
+    await page.click('#ctrlc');
+    await page.waitForFunction(`${noticeText}.includes('^C was not sent')`, { timeout: 5000 });
+    await page.click('#seat-btn');
+    await page.waitForFunction(`${noticeText}.includes('the seat was not changed')`, { timeout: 5000 });
+    held = false;
+    release();
+    await page.waitForFunction(`document.getElementById('seat').textContent !== 'you hold the seat'`, { timeout: 10_000 });
+    assert.deepEqual(problems, []);
+  } finally {
+    release();
+    delete (native as Partial<typeof native>).nativeAttach;
+    await page.close();
+    a.close();
+  }
+});
+
 test('a Close confirmation authorizes only the session that was selected when it was armed', async (t) => {
   if (skip || !browser) return t.skip(skip || 'no browser');
   const a = await agent();

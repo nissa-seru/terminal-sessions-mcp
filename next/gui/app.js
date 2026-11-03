@@ -901,6 +901,7 @@
 
   $('seat-btn').onclick = async () => {
     if (!state.current) return;
+    if (state.attaching) return notice('Attaching: the seat was not changed. Click again once the terminal is back.');
     const mine = state.controller === state.me;
     if (mine) {
       // Releasing: no resize of ours may follow and take the seat back (the house's read of 2f357bd, #22).
@@ -922,6 +923,7 @@
   };
 
   $('ctrlc').onclick = () => {
+    if (state.attaching) return notice('Attaching: ^C was not sent. Click again once the terminal is back.');
     if (state.current) tool('signal', { session: state.current, signal: 'SIGINT' }).catch((e) => notice(e.message));
   };
 
