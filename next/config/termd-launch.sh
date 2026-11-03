@@ -19,7 +19,7 @@ set -eu
 : "${HOME:?HOME is not set}"
 # Resolved before leaving the caller's directory, so a relative path to this script works as
 # an absolute one does (the house's read of 59f660b, #22).
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cd "$HOME"
 
 # A session costs about five open files (pty, journal, key file). A supervisor that didn't
@@ -100,7 +100,7 @@ prepend /opt/homebrew/bin
 prepend "$HOME/.local/bin"
 if nvm=$(nvm_bin); then prepend "$nvm"; fi
 prepend "$HOME/.volta/bin"
-case ${TSM_NODE_BIN:-} in */*) if d=$(CDPATH= cd -- "$(dirname "$TSM_NODE_BIN")" 2>/dev/null && pwd); then prepend "$d"; fi ;; esac
+case ${TSM_NODE_BIN:-} in */*) if d=$(CDPATH= cd -P -- "$(dirname "$TSM_NODE_BIN")" 2>/dev/null && pwd -P); then prepend "$d"; fi ;; esac
 export PATH
 
 daemon=${TSM_DAEMON:-"$here/../dist/src/daemon.js"}
