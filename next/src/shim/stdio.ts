@@ -14,7 +14,8 @@
  *    closes the socket and exits 0.
  *  - When the socket drops, every request in flight is answered with -32000:
  *    its outcome is unknown, and the host must not blindly resend it (G16); it
- *    is not resent here either. The daemon numbers the requests it makes of the
+ *    is not resent here either, but for a featureSets/update, which the replay
+ *    sends again. The daemon numbers the requests it makes of the
  *    host per connection, so the shim gives them ids of its own and maps the
  *    host's answers back; an answer to a request from a connection that is gone
  *    is dropped, never passed on as the answer to a new one. The shim reconnects
@@ -22,8 +23,10 @@
  *    and tried again) and replays the host's `initialize`, its MCPL grant with
  *    the reductions since, and its open channels, so the new connection is in
  *    the state the host believes it is in. The replay follows what the daemon
- *    did with what the host sent — a request counts when its answer says it took,
- *    a notification when it arrives, and a grant the daemon refused by failing
+ *    did with what the host sent — an answered `initialize` starts it over, a
+ *    request since counts when its answer says it took, or, for a
+ *    featureSets/update, when none came, a notification when it arrives,
+ *    and a grant the daemon refused by failing
  *    closed is replayed to fail closed again, among the first 10,000 refusals
  *    since the last accepted grant — goes in bounded windows, its
  *    answers are swallowed, and a refusal is logged. What expires in the queue
@@ -558,8 +561,9 @@ const ASKED_MAX = 4096;
 /**
  * What to replay on a new connection so it is in the host's state: its `initialize`; the MCPL grant
  * (the last request-form `featureSets/update` the daemon accepted) with every reduction since —
- * notification-form updates only ever add `disabled` feature sets (MCPL §6.7), so all of them since
- * the grant fold into one set, however many there were (the house's read of 4e37a11, #22); the
+ * notification-form updates only ever add `disabled` feature sets (MCPL §6.7), so those sent between
+ * two of the updates below fold into one set, however many there were, replayed in its place among
+ * them, a set disabled more than once at its last (the house's read of 4e37a11, #22); the
  * later request-form updates the daemon refused after running it, replayed after the grant in the
  * order sent — the daemon fails closed on a malformed one, to an empty grant with no tools, and only
  * its own handling of the same requests puts the new connection where the host was told the old one
@@ -567,15 +571,20 @@ const ASKED_MAX = 4096;
  * since the last accepted grant, since a later refusal that left the lane as it was must not stand in
  * for one that failed it closed (the house's read of the 38 commits, #22 comment 6274370651), and one
  * past the cap is logged and not replayed (the house's read of the 33 commits, #22 comment
- * 6307350861); a refusal the daemon did not run (`executed: false`) changed nothing and is not kept;
+ * 6307350861); a refusal the daemon did not run (`executed: false`) changed nothing and is not kept,
+ * and one a closed connection never answered may have run, so it is kept with them;
  * and the channels the host has open (reopened without `history`: catch-up
  * resumes from the principal's `delivered` cursor, G22). A request's effect is recorded when its
- * answer arrives, a notification's when it does (it is never answered, and one that waits out the
+ * answer arrives, or for a featureSets/update when the connection closes first, a notification's
+ * when it does (it is never answered, and one that waits out the
  * queue is never forwarded), so what expired is reflected too (the house's read of 4e37a11, #22).
+ * An answered `initialize` starts the picture over: what the host sent before it records nothing,
+ * however late its answer.
  */
 interface Grant {
   m: Parsed;
   seq: number;
+  unanswered?: true;
 }
 const replay: { initialize?: Parsed; initialized?: Parsed; since: number; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, { m: Parsed; seq: number }> } = {
   since: 0,
@@ -587,11 +596,12 @@ const REDUCED_MAX = 10_000;
 const REFUSED_MAX = 10_000;
 /** Channels closed while an open was pending, with the close's seq: a later answer to an earlier open does not reopen them. */
 const closedAt = new Map<string, number>();
-/** What was replayed under an id, for the log: `refusedBefore` when the daemon refused it on the connection before, so a refusal now is the expected answer. */
+/** What was replayed under an id, for the log: `refusedBefore` when the daemon refused it on the connection before, so a refusal now is the expected answer, `unanswered` when that connection closed before answering it. */
 interface Replayed {
   method: string;
   channel?: string;
   refusedBefore?: true;
+  unanswered?: true;
 }
 /** Ids of replayed requests whose answers the host must not see, with what was replayed, for the log. */
 const swallow = new Map<string, Replayed>();
@@ -675,6 +685,16 @@ function grantAnswered(p: Pending, m: Parsed): void {
   }
   replay.refused.push({ m: p.m, seq: p.seq });
   if (replay.refused.length > 1 && replay.refused[replay.refused.length - 2]!.seq > p.seq) replay.refused.sort((a, b) => a.seq - b.seq);
+}
+
+function grantUnanswered(p: Pending): void {
+  if (p.seq < replay.since || (replay.grant?.seq ?? -1) > p.seq) return;
+  if (replay.refused.length >= REFUSED_MAX) {
+    log(`more than ${REFUSED_MAX} refused or unanswered featureSets/update requests since the last accepted grant; this one will not be replayed after a reconnect`);
+    return;
+  }
+  replay.refused.push({ m: p.m, seq: p.seq, unanswered: true });
+  replay.refused.sort((a, b) => a.seq - b.seq);
 }
 
 /** A channels/open the daemon accepted: remember the channel (by the id the daemon gave it) until the host closes it. */
@@ -1016,8 +1036,18 @@ function replayState(sock: WebSocket): void {
   if (replay.initialize) items.push({ m: replay.initialize, request: true, method: 'initialize' });
   if (replay.initialized) items.push({ m: replay.initialized, request: false, method: 'notifications/initialized' });
   if (replay.grant) items.push({ m: replay.grant.m, request: true, method: 'featureSets/update' });
-  for (const r of replay.refused) items.push({ m: r.m, request: true, method: 'featureSets/update', refusedBefore: true });
-  if (replay.reduced.size) items.push({ m: { jsonrpc: '2.0', method: 'featureSets/update', params: { disabled: [...replay.reduced.keys()] } } as Parsed, request: false, method: 'featureSets/update' });
+  const reductions = [...replay.reduced].sort((a, b) => a[1] - b[1]);
+  let reduced = 0;
+  const reduce = (before: number) => {
+    const disabled: string[] = [];
+    while (reduced < reductions.length && reductions[reduced]![1] < before) disabled.push(reductions[reduced++]![0]);
+    if (disabled.length) items.push({ m: { jsonrpc: '2.0', method: 'featureSets/update', params: { disabled } } as Parsed, request: false, method: 'featureSets/update' });
+  };
+  for (const r of replay.refused) {
+    reduce(r.seq);
+    items.push({ m: r.m, request: true, method: 'featureSets/update', ...(r.unanswered ? { unanswered: true as const } : { refusedBefore: true as const }) });
+  }
+  reduce(Number.POSITIVE_INFINITY);
   for (const [channel, { m }] of replay.channels) items.push({ m, request: true, method: 'channels/open', channel });
   replaying = { items, next: 0, outstanding: 0, sock };
   pumpReplay();
@@ -1050,7 +1080,8 @@ function pumpReplay(): void {
 function replayed(what: Replayed, m: Parsed): void {
   if (replaying) replaying.outstanding--;
   const e = m.error === undefined ? '' : isObj(m.error) ? `${String(m.error.code)} ${String(m.error.message)}` : JSON.stringify(m.error);
-  if (what.refusedBefore) {
+  if (what.unanswered) log(`replay of ${what.method} ${m.error === undefined ? 'accepted' : `refused (${e})`}, where the connection before closed without answering it`);
+  else if (what.refusedBefore) {
     if (m.error !== undefined) log(`replay of ${what.method} refused (${e}), as it was on the connection before: the new connection is where the host was told it is`);
     else log(`replay of ${what.method} accepted, where the connection before refused it: the host was told otherwise`);
   } else if (m.error !== undefined) log(`replay of ${what.method}${what.channel ? ` for ${what.channel}` : ''} refused (${e}): the host believes otherwise and was not told`);
@@ -1123,7 +1154,10 @@ function connect(): void {
     }
     if (wasOpen) log(`daemon connection closed (${code}${reason.length ? ` ${reason.toString()}` : ''})`);
     // Their outcome is unknown: say so, never leave the host waiting forever (G16).
-    for (const p of inflight.values()) failRequest(p.id, 'the terminal daemon connection closed before a response; the outcome is unknown');
+    for (const p of inflight.values()) {
+      if (p.method === 'featureSets/update') grantUnanswered(p);
+      failRequest(p.id, 'the terminal daemon connection closed before a response; the outcome is unknown');
+    }
     inflight.clear();
     asked.clear();
     swallow.clear();

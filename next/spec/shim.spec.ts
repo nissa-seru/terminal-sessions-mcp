@@ -629,6 +629,68 @@ test("tg-19: after a drop, the request in flight is failed and not resent, the r
   }
 });
 
+test('tg-19: a featureSets/update in flight when the connection drops is replayed after the grant, so the new connection has the grant the host last asked for, not the wider one before it', async () => {
+  const p = await peer((c, m) => {
+    if (c.index === 0 && m.method === 'featureSets/update' && m.id === 3) return undefined; // the narrowing: in flight when the connection drops
+    return { result: {} };
+  });
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    const wide = { effectiveCapabilities: ['tools', 'pushEvents', 'channels.lifecycle'] };
+    const narrow = { effectiveCapabilities: ['tools'] };
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: wide });
+    await s.next(byId(2));
+    s.send({ jsonrpc: '2.0', id: 3, method: 'featureSets/update', params: narrow });
+    await until(() => p.conns[0]!.frames.some((f) => f.id === 3), 5000, 'the narrowing to reach the peer');
+    p.conns[0]!.ws.terminate();
+    assert.equal((await s.next(byId(3))).error?.code, -32000, 'the host is told its outcome is unknown');
+    s.send({ jsonrpc: '2.0', id: 4, method: 'ping' });
+    assert.deepEqual((await s.next(byId(4))).result, {});
+    const updates = p.conns[1]!.frames.filter((f) => f.method === 'featureSets/update').map((f) => f.params);
+    assert.deepEqual(updates, [wide, narrow], 'the accepted grant, then the update whose answer never came');
+    assert.ok(noReplayedAnswer(s));
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
+test('tg-19: a reduction sent before an update the connection left unanswered is replayed before it, so the update the host sent last decides', async () => {
+  const p = await peer((c, m) => {
+    if (c.index === 0 && m.method === 'featureSets/update' && m.id === 3) return undefined;
+    return { result: {} };
+  });
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    const wide = { effectiveCapabilities: ['tools', 'pushEvents', 'channels.lifecycle'] };
+    const reduction = { disabled: ['channels.lifecycle'] };
+    const replacement = { effectiveCapabilities: ['tools', 'channels.lifecycle'] };
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: wide });
+    await s.next(byId(2));
+    s.send({ jsonrpc: '2.0', method: 'featureSets/update', params: reduction });
+    s.send({ jsonrpc: '2.0', id: 3, method: 'featureSets/update', params: replacement });
+    await until(() => p.conns[0]!.frames.some((f) => f.id === 3), 5000, 'the replacement to reach the peer');
+    p.conns[0]!.ws.terminate();
+    assert.equal((await s.next(byId(3))).error?.code, -32000);
+    s.send({ jsonrpc: '2.0', id: 4, method: 'ping' });
+    assert.deepEqual((await s.next(byId(4))).result, {});
+    const updates = p.conns[1]!.frames.filter((f) => f.method === 'featureSets/update').map((f) => f.params);
+    assert.deepEqual(updates, [wide, reduction, replacement], 'in the order the host sent them');
+    assert.ok(noReplayedAnswer(s));
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 test('tg-19: an initialize the daemon answered starts the replayed picture over: a reconnect after it replays no grant or channel from before it', async () => {
   const p = await peer((_c, m) => (m.method === 'channels/open' ? { result: { channel: { id: 'terminal:k1' } } } : { result: {} }));
   const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
@@ -715,6 +777,28 @@ test('tg-19: what was sent before an answered initialize stays out of the replay
     const frames = p.conns[1]!.frames;
     assert.deepEqual(frames.map((f) => f.method), ['initialize', 'ping'], 'the newer initialize alone, then the queue');
     assert.equal((frames[0]!.params?.clientInfo as { name: string }).name, 'newer');
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
+test('tg-19: an update the connection closes on stays out of the replay when an initialize sent after it was answered', async () => {
+  const p = await peer((c, m) => (c.index === 0 && m.id === 2 ? undefined : { result: {} }));
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: { effectiveCapabilities: ['tools'] } });
+    s.send(initMcpl(3));
+    await s.next(byId(3));
+    p.conns[0]!.ws.terminate();
+    assert.equal((await s.next(byId(2))).error?.code, -32000);
+    s.send({ jsonrpc: '2.0', id: 4, method: 'ping' });
+    assert.deepEqual((await s.next(byId(4))).result, {});
+    assert.deepEqual(p.conns[1]!.frames.map((f) => f.method), ['initialize', 'ping'], 'the initialize alone, then the queue');
     s.end();
     await s.exited;
   } finally {
