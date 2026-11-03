@@ -148,6 +148,8 @@ function coerce(key: string, raw: string, type: ParamType | undefined): unknown 
   }
 }
 
+const RESERVED = new Set(['if', 'then', 'elif', 'else', 'fi', 'case', 'esac', 'for', 'select', 'while', 'until', 'do', 'done', 'in', 'function', 'time', 'coproc', 'foreach', 'end', 'repeat', 'nocorrect', 'noglob', 'and', 'or', 'not', 'begin', 'switch']);
+
 /**
  * One argument as sh, bash, zsh and fish all read it: a plain word stays bare; anything else goes
  * in single quotes, where nothing is special to the POSIX shells and only the quote and the
@@ -170,7 +172,8 @@ function shellWord(w: string): string {
  * shell, so `tsm run q -- echo "a;b"` ran `b` as a command (the house's read of 4e37a11, #22).
  */
 function commandLine(words: string[], exactFrom: number): string {
-  return [...words.slice(0, exactFrom), ...words.slice(exactFrom).map(shellWord)].join(' ');
+  const after = words.slice(exactFrom).map((w, i) => (exactFrom === 0 && i === 0 && RESERVED.has(w) ? `command ${w}` : shellWord(w)));
+  return [...words.slice(0, exactFrom), ...after].join(' ');
 }
 
 interface Parsed {

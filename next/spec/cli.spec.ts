@@ -342,6 +342,28 @@ test('atc-20: exit codes agree with the header for every state of run, await, st
   }
 });
 
+test('after --, a first word that a shell reads as a keyword names the program, under each of sh, bash, zsh, dash and fish that is installed', async (t) => {
+  const d = await cannedDaemon({ run: { runId: 'r1', state: 'exited', exit: 0 } });
+  try {
+    const r = await tsm(['run', 'q', '--', 'time', '-f', '%e', 'sleep', '0'], { TSM_URL: `ws://127.0.0.1:${d.port}` });
+    assert.equal(r.code, 0, r.stderr);
+    const command = d.calls[0]!.arguments.command as string;
+    assert.equal(command, 'command time -f %e sleep 0');
+    const bin = path.join(tmp, 'keyword-bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'time'), '#!/bin/sh\necho "program $*"\n', { mode: 0o755 });
+    const known = ['/bin/sh', '/bin/bash', '/bin/zsh', '/bin/dash', '/usr/bin/fish', '/opt/homebrew/bin/fish', '/usr/local/bin/fish'];
+    const shells = known.filter((s) => fs.existsSync(s));
+    t.diagnostic(`shells run: ${shells.join(', ')}; not installed: ${known.filter((s) => !shells.includes(s)).join(', ') || 'none'}`);
+    for (const shell of shells) {
+      const out = await new Promise<string>((resolve) => execFile(shell, ['-c', command], { env: { PATH: bin, HOME: tmp } }, (_e, stdout) => resolve(stdout)));
+      assert.equal(out, 'program -f %e sleep 0\n', shell);
+    }
+  } finally {
+    await d.close();
+  }
+});
+
 test('ux-18: after --, each word is one argument of the command under sh, bash, zsh, dash and fish', async () => {
   const d = await cannedDaemon({ run: { runId: 'r1', state: 'exited', exit: 0 } });
   const env = { TSM_URL: `ws://127.0.0.1:${d.port}` };
