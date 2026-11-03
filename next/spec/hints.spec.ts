@@ -16,8 +16,8 @@ const base = (over: Partial<RunResult>): RunResult => ({
 const text = (r: RunResult) => renderRun(r, 'transcript').text;
 
 test('set -e at a command position is recognized, and the last such set on the line decides; set +e, set -x and set -e inside quotes are not', () => {
-  for (const line of ['set -e', 'set -eu', 'set -euo pipefail', 'set -Eeuo pipefail', 'set -o errexit', 'cd /w && set -e', 'echo a; set -e\nmake', 'if true; then set -e; fi', 'set +e; set -e', 'set -e; set +e; set -o errexit']) assert.ok(looksLikeErrexit(line), line);
-  for (const line of ['set +e', 'set -x', 'set -u', 'set -o pipefail', 'grep "set -e" build.sh', 'echo set -e', 'bash -e build.sh', 'setenv -e', 'set -e; set +e', 'set -euo pipefail; make; set +o errexit', 'set -e && make; set +eu']) assert.ok(!looksLikeErrexit(line), line);
+  for (const line of ['set -e', 'set -eu', 'set -euo pipefail', 'set -Eeuo pipefail', 'set -o errexit', 'cd /w && set -e', 'echo a; set -e\nmake', 'if true; then set -e; fi', 'set +e; set -e', 'set -e; set +e; set -o errexit', 'set -e # strict mode; set +e to disable']) assert.ok(looksLikeErrexit(line), line);
+  for (const line of ['set +e', 'set -x', 'set -u', 'set -o pipefail', 'grep "set -e" build.sh', 'echo set -e', 'bash -e build.sh', 'setenv -e', 'set -e; set +e', 'set -euo pipefail; make; set +o errexit', 'set -e && make; set +eu', 'make # then; set -e']) assert.ok(!looksLikeErrexit(line), line);
 });
 
 test('a one-shot ssh without -t is recognized with its host; a shell-opening ssh, ssh -t/-tt and non-ssh lines are not', () => {
@@ -32,7 +32,7 @@ test('a one-shot ssh without -t is recognized with its host; a shell-opening ssh
 });
 
 test('the status line hints: set -e armed, a one-shot ssh running or cancelled, the shell gone under a Run', () => {
-  assert.match(text(base({ line: 'set -euo pipefail' })), /turned on set -e in the shell itself.*set \+e turns it off/);
+  assert.match(text(base({ line: 'set -euo pipefail' })), /looks like it turned on set -e in the shell itself.*set \+e turns it off/);
   assert.doesNotMatch(text(base({ line: 'set -euo pipefail', target: 'process' })), /set -e/, 'a process does not change the shell');
   assert.doesNotMatch(text(base({ line: 'make test' })), /set -e/);
   const running = base({ state: 'running', line: 'ssh build01 make -j8', durationMs: 30000 });
@@ -92,7 +92,7 @@ test('set -e inside quotes, a subshell, a substitution or a heredoc body arms no
   for (const line of armed) assert.ok(looksLikeErrexit(line), JSON.stringify(line));
   assert.doesNotMatch(text(base({ line: 'echo "build; set -e"' })), /set -e/);
   assert.doesNotMatch(text(base({ line: '(cd sub; set -e; make)' })), /set -e/);
-  assert.match(text(base({ line: 'for f in a; do set -e; done' })), /turned on set -e in the shell itself/);
+  assert.match(text(base({ line: 'for f in a; do set -e; done' })), /looks like it turned on set -e in the shell itself/);
 });
 
 test('an ssh option with its value attached is a value, not flags: the one-shot warning stays; RequestTTY asks for a terminal', () => {

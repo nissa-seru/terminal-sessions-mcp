@@ -16,8 +16,8 @@ export const looksLikeShellOpener = (line: string | undefined): boolean => line 
 
 /**
  * The line with the parts a shell would not run as its own words blanked: quoted strings, backtick
- * substitutions, parenthesised groups (a subshell or `$(…)`: `set -e` there ends with it) and heredoc
- * bodies. `echo "build; set -e"`, `bash -c 'set -e; make'`, `(cd sub; set -e; make)` and
+ * substitutions, parenthesised groups (a subshell or `$(…)`: `set -e` there ends with it), heredoc
+ * bodies and comments. `echo "build; set -e"`, `bash -c 'set -e; make'`, `(cd sub; set -e; make)` and
  * `grep "x; set -e" f` turn nothing on in the shell that runs them (the house's read of 1cabc6a, #22).
  */
 function ownWords(line: string): string {
@@ -51,6 +51,9 @@ function ownWords(line: string): string {
       if (m) pending.push(m[1] ?? m[2] ?? m[3]!);
       emit(' ');
       i += m ? m[0].length : 2;
+    } else if (c === '#' && (i === 0 || /[\s;&|()]/.test(line[i - 1]!))) {
+      const nl = line.indexOf('\n', i);
+      i = nl < 0 ? line.length : nl;
     } else if (c === '\n' && pending.length) {
       // Each body runs to the line that is its delimiter (leading tabs allowed, as with `<<-`).
       let j = i + 1;
