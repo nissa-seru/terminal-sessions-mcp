@@ -163,6 +163,7 @@ interface Conn {
    */
   attaching: Map<string, AttachWait>;
   inFlight: number;
+  refusing: number;
   /** Set first thing in onClose: an await that resumes after it must not attach anything (tsg-4). */
   closed: boolean;
   /** How it closed: on purpose (1000/1001) gives up seats at once, a drop keeps them through the grace (§9). */
@@ -738,6 +739,7 @@ export class TermServer {
       followers: new Map(),
       attaching: new Map(),
       inFlight: 0,
+      refusing: 0,
       closed: false,
       closedClean: false,
       seenFrame: false,
@@ -874,17 +876,37 @@ export class TermServer {
     this.send(conn.ws, { jsonrpc: '2.0', id, error }, undefined, onDone);
   }
 
+  private refuse(conn: Conn, id: Id | null, error: { code: number; message: string; data?: unknown }): void {
+    if (conn.ws.readyState !== conn.ws.OPEN) return;
+    const limit = this.opts.maxInFlight ?? 128;
+    if (conn.refusing >= limit) {
+      this.emit('warn', 'ended a connection that reads none of its replies', { ...this.connFields(conn), limit });
+      conn.ws.terminate();
+      return;
+    }
+    conn.refusing++;
+    let waiting = true;
+    const written = (): void => {
+      if (waiting) conn.refusing--;
+      waiting = false;
+    };
+    this.reply(conn, id, error, written);
+    // ws hands every frame of one packet to onMessage in one tick, and a write's callback comes only after
+    // them all: a refusal the socket took at once, leaving nothing buffered, waits for nothing.
+    if (conn.ws.bufferedAmount === 0) written();
+  }
+
   private async onMessage(conn: Conn, data: RawData): Promise<void> {
     let parsed: unknown;
     try {
       parsed = JSON.parse(data.toString());
     } catch {
-      this.reply(conn, null, { code: PARSE_ERROR, message: 'parse error' });
+      this.refuse(conn, null, { code: PARSE_ERROR, message: 'parse error' });
       return;
     }
     const frame = classify(parsed);
     if (frame.kind === 'invalid') {
-      if (frame.id !== undefined) this.reply(conn, frame.id, { code: frame.code, message: frame.message });
+      if (frame.id !== undefined) this.refuse(conn, frame.id, { code: frame.code, message: frame.message });
       return;
     }
     if (frame.kind === 'response') {
@@ -902,13 +924,12 @@ export class TermServer {
     }
     // §12: work in flight per connection is bounded, notifications included. A request is in
     // flight until its reply reached the socket, not merely until it was queued: a client that
-    // stops reading is refused once `limit` replies wait for it, so what waits for it is `limit`
-    // replies plus one short refusal per request it keeps sending, instead of every reply (the
-    // house's read of 2f357bd, #22). The refusal says the request did not run, so sending it again
-    // is safe.
+    // stops reading is refused once `limit` replies wait for it, and ended once `limit` refusals
+    // wait too, so what waits for it is bounded, instead of every reply (the house's read of
+    // 2f357bd, #22). The refusal says the request did not run, so sending it again is safe.
     const limit = this.opts.maxInFlight ?? 128;
     if (conn.inFlight >= limit) {
-      if (isCall) this.reply(conn, id, { code: OVERLOADED, message: 'too many requests in flight on this connection; this one was not run: send it again once earlier ones have answered', data: { limit, executed: false } });
+      if (isCall) this.refuse(conn, id, { code: OVERLOADED, message: 'too many requests in flight on this connection; this one was not run: send it again once earlier ones have answered', data: { limit, executed: false } });
       else this.emit('debug', 'dropped a notification: too much in flight', { ...this.connFields(conn), method: clip(msg.method, 64), limit });
       return;
     }
