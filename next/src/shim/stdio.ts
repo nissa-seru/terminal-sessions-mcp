@@ -566,7 +566,7 @@ const ASKED_MAX = 4096;
  * (the last request-form `featureSets/update` the daemon accepted) with every reduction since —
  * notification-form updates only ever add `disabled` feature sets (MCPL §6.7), so those sent between
  * two of the updates below fold into one set, however many there were, replayed in its place among
- * them (the house's read of 4e37a11, #22); the
+ * them, a set disabled more than once at its last (the house's read of 4e37a11, #22); the
  * later request-form updates the daemon refused after running it, replayed after the grant in the
  * order sent — the daemon fails closed on a malformed one, to an empty grant with no tools, and only
  * its own handling of the same requests puts the new connection where the host was told the old one
