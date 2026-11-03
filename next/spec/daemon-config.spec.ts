@@ -584,6 +584,41 @@ test("TSM_NODE is termd's MCPL node name, not the launcher's: it passes through 
   assert.doesNotMatch(none.stderr, /TSM_NODE=/, 'the advice never names the identity variable');
 });
 
+test('TSM_NODE_BIN: the node it names, by an absolute path or one from $HOME, is the `node` a process Run finds', async () => {
+  const home = path.join(tmp, 'named-node-home');
+  fs.mkdirSync(path.join(home, 'tools', 'bin'), { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(home, 'tools', 'bin', 'node'));
+  const bin = path.join(tmp, 'named-node', 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  // A shell's exported CDPATH naming a directory that also holds tools/bin changes neither where the path resolves nor what cd prints.
+  const cdpath = path.join(tmp, 'named-node-cdpath');
+  fs.mkdirSync(path.join(cdpath, 'tools', 'bin'), { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(cdpath, 'tools', 'bin', 'node'));
+  // A HOME that is a link to another directory: `..` from it is the other directory's parent, as exec resolves it.
+  const real = path.join(tmp, 'named-node-srv', 'alice');
+  const linked = path.join(tmp, 'named-node-homes', 'alice');
+  for (const top of [path.join(tmp, 'named-node-srv'), path.join(tmp, 'named-node-homes')]) {
+    fs.mkdirSync(path.join(top, 'node', 'bin'), { recursive: true });
+    fs.symlinkSync(process.execPath, path.join(top, 'node', 'bin', 'node'));
+  }
+  fs.mkdirSync(real, { recursive: true });
+  fs.symlinkSync(real, linked);
+  const at = (dir: string) => path.join(fs.realpathSync(dir), 'node');
+  for (const [HOME, named, where, CDPATH] of [
+    [home, path.join(bin, 'node'), at(bin), undefined],
+    [home, 'tools/bin/node', at(path.join(home, 'tools', 'bin')), undefined],
+    [home, 'tools/bin/node', at(path.join(home, 'tools', 'bin')), cdpath],
+    [linked, '../node/bin/node', at(path.join(tmp, 'named-node-srv', 'node', 'bin')), undefined],
+  ] as const) {
+    const r = await launch(LAUNCHER, ['--port', '0'], { HOME, TSM_NODE_BIN: named, CDPATH });
+    assert.equal(r.code, 0, r.stderr);
+    const PATH = r.started!.env.PATH!;
+    const found = execFileSync('/bin/sh', ['-c', 'command -v node || true'], { env: { PATH }, encoding: 'utf8' }).trim();
+    assert.equal(found, where, `HOME=${HOME} TSM_NODE_BIN=${named}${CDPATH ? ` CDPATH=${CDPATH}` : ''}: a Run inherits PATH ${PATH}`);
+  }
+});
+
 test('the launcher works by a relative path: its own directory is resolved before it changes to $HOME', async () => {
   const home = voltaHome('relative');
   const r = await launch('config/termd-launch.sh', ['--port', '0'], { HOME: home }, { cwd: path.join(ROOT, 'next') });
@@ -593,6 +628,10 @@ test('the launcher works by a relative path: its own directory is resolved befor
   const real = await launch('config/termd-launch.sh', ['--help'], { HOME: home, TSM_DAEMON: undefined }, { cwd: path.join(ROOT, 'next') });
   assert.equal(real.code, 0, real.stderr);
   assert.match(real.stdout, /--port/, "termd's usage");
+  // A shell's exported CDPATH would make cd print the directory it finds, into the launcher's own.
+  const cdpath = await launch('config/termd-launch.sh', ['--help'], { HOME: home, TSM_DAEMON: undefined, CDPATH: '.' }, { cwd: path.join(ROOT, 'next') });
+  assert.equal(cdpath.code, 0, cdpath.stderr);
+  assert.match(cdpath.stdout, /--port/, "termd's usage, with CDPATH=.");
 });
 
 test('the launcher raises the open-file limit to what the hard limit allows and says so when that is under 65536; nothing is said when 65536 is reached', async () => {
