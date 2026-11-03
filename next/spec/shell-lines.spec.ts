@@ -195,7 +195,7 @@ test('/bin/bash: shell-10: after a bind -x widget at the prompt, the next daemon
   }
 });
 
-test("a Run's text loses bash 3.2's child-setpgid warning line, and nothing else", () => {
+test("the specs' real-shell helper drops bash 3.2's child-setpgid warning line from a Run's text, and nothing else", () => {
   const warning = 'bash: child setpgid (51915 to 51915): Operation not permitted';
   assert.equal(withoutSetpgidWarning(`${warning}\nsub`), 'sub');
   assert.equal(withoutSetpgidWarning(`one\r\n${warning}\r\ntwo`), 'one\r\ntwo');
