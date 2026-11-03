@@ -173,6 +173,20 @@ test('jr2-6: a journal handed on writes nothing more: an event appended after, a
   }
 });
 
+test('jr2-6: a journal handed on leaves its store\'s files to their new owner: an expiry sweep removes nothing', () => {
+  const dir = tmpDir();
+  try {
+    const j = new Journal({ cold: new FileStore(dir, { maxAgeMs: 1 }) });
+    j.append(out('a'));
+    j.append(out('b'));
+    j.handOn();
+    j.expire(Date.now() + 60_000);
+    assert.deepEqual(seqs(onDisk(dir)), [1, 2]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('jr2-6: a sealed journal over a store that keeps no high water writes its ring once the disk takes writes', (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const dir = tmpDir();

@@ -955,7 +955,7 @@ export class Journal {
   expire(now?: number): void {
     this.hot.expire?.(now);
     if (this.coldError !== null) this.noteRingDrops();
-    this.cold?.expire?.(now);
+    if (!this.handedOn) this.cold?.expire?.(now);
   }
 
   /**
