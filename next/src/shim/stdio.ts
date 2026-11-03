@@ -23,8 +23,9 @@
  *    and tried again) and replays the host's `initialize`, its MCPL grant with
  *    the reductions since, and its open channels, so the new connection is in
  *    the state the host believes it is in. The replay follows what the daemon
- *    did with what the host sent — a request counts when its answer says it took,
- *    or, for a featureSets/update, when none came, a notification when it arrives,
+ *    did with what the host sent — an answered `initialize` starts it over, a
+ *    request since counts when its answer says it took, or, for a
+ *    featureSets/update, when none came, a notification when it arrives,
  *    and a grant the daemon refused by failing
  *    closed is replayed to fail closed again, among the first 10,000 refusals
  *    since the last accepted grant — goes in bounded windows, its
@@ -581,6 +582,8 @@ const ASKED_MAX = 4096;
  * answer arrives, or for a featureSets/update when the connection closes first, a notification's
  * when it does (it is never answered, and one that waits out the
  * queue is never forwarded), so what expired is reflected too (the house's read of 4e37a11, #22).
+ * An answered `initialize` starts the picture over: what the host sent before it records nothing,
+ * however late its answer.
  */
 interface Grant {
   m: Parsed;
