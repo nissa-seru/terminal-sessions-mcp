@@ -489,6 +489,7 @@ export class SessionRegistry {
     for (const slot of this.slots.values()) {
       if (slot.view.kind === 'live') slot.cursors.merge(slot.view.session.cursorsSnapshot());
       slot.cursors.flush();
+      journalOf(slot).handOn();
     }
     this.dirLock?.release();
     this.dirLock = undefined;
