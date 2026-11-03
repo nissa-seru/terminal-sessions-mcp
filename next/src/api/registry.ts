@@ -1235,33 +1235,41 @@ export class SessionRegistry {
       try {
         await this.closeLive(slot, { ...opts, persist: true });
       } finally {
-        this.emit({ type: 'closed', id });
+        if (this.slots.get(id)?.view.kind === 'history') this.emit({ type: 'closed', id });
       }
     });
   }
 
   /**
    * Close every live session (daemon shutdown). They reappear after a restart as history-only,
-   * not closed. Cursors are flushed and the data dir's lock released last.
+   * not closed. Cursors are flushed and the data dir's lock released last: after it has closed the
+   * sessions opened while it ran too, and no name's operation is pending. A close that throws is
+   * said in the log; a session it leaves live stays live and is not closed again.
    */
   async closeAll(opts: { graceful?: boolean; reason?: string } = {}): Promise<void> {
-    const keys = new Set([...this.slots.keys()].map(fold));
-    for (const k of this.locks.keys()) keys.add(k);
-    await Promise.all(
-      [...keys].map((key) =>
-        this.withLock(key, async () => {
-          for (const slot of [...this.slots.values()]) {
-            if (fold(slot.id) !== key || slot.view.kind !== 'live') continue;
-            try {
-              await this.closeLive(slot, { ...opts, persist: false });
-            } catch {
-              // closeLive has already turned it into history
+    const closed = new Set<LiveEntry>();
+    const unclosed = (slot: Slot) => slot.view.kind === 'live' && !closed.has(slot.view);
+    do {
+      const keys = new Set([...this.slots.keys()].map(fold));
+      for (const k of this.locks.keys()) keys.add(k);
+      await Promise.all(
+        [...keys].map((key) =>
+          this.withLock(key, async () => {
+            for (const slot of [...this.slots.values()]) {
+              if (fold(slot.id) !== key || !unclosed(slot)) continue;
+              closed.add(slot.view as LiveEntry);
+              try {
+                await this.closeLive(slot, { ...opts, persist: false });
+              } catch (e) {
+                const why = e instanceof Error ? e.message : String(e);
+                this.opts.log?.('warn', slot.view.kind === 'live' ? `session ${slot.id} could not be closed at shutdown, and stays live: ${why}` : `session ${slot.id} was closed at shutdown, though its close failed: ${why}`, { session: slot.id });
+              }
+              if (slot.view.kind === 'history') this.emit({ type: 'closed', id: slot.id });
             }
-            this.emit({ type: 'closed', id: slot.id });
-          }
-        }).catch(() => undefined),
-      ),
-    );
+          }).catch(() => undefined),
+        ),
+      );
+    } while (this.locks.size > 0 || [...this.slots.values()].some(unclosed));
     this.dispose();
   }
 
