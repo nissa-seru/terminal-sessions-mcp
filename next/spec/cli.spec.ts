@@ -534,6 +534,8 @@ test('every shorthand reaches its tool, over a connection that asks for the full
     const expected: Array<[string[], string, Record<string, unknown>]> = [
       [['sessions'], 'session_list', {}],
       [['open', 's', '--cwd', '/tmp'], 'session_open', { session: 's', cwd: '/tmp' }],
+      [['run', 's', 'echo', 'hi'], 'run', { session: 's', command: 'echo hi' }],
+      [['read', 's', '--since', '0'], 'read', { session: 's', since: 0 }],
       [['close', 's'], 'session_close', { session: 's' }],
       [['declare', 's', 'fish'], 'session_declare_shell', { session: 's', shell: 'fish' }],
       [['screen', 's'], 'screen', { session: 's' }],
