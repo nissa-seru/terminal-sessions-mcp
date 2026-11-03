@@ -1,5 +1,5 @@
 /**
- * Real bash 3.2 and zsh against the user's rc files (a fake HOME): another shell
+ * Real bash (3.2 on macOS) and zsh against the user's rc files (a fake HOME): another shell
  * integration in the rc, nested shells, `exec`, PROMPT_COMMAND and DEBUG-trap
  * interplay, bash-preexec, XDG ZDOTDIR layouts, login files, prompt rebuilders.
  */
