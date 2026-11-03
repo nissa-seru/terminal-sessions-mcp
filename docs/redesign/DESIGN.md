@@ -267,7 +267,9 @@ to, and what agents may plan around. Numbering is stable; amend by adding, not r
   gives each command's status (bash, zsh, fish), the result carries them too (`pipeStatus`) and
   the status line says when a command before the last one failed, since `$?` alone is the last
   command's unless pipefail is on. Every daemon-issued line — one line
-  or many — is delivered as a sourced command file (` . '<dir>/tsm-cmd-N'`), never as
+  or many — is delivered as a command file (` . '<dir>/tsm-cmd-N'`; fish without its integration
+  sources it, ` source '<dir>/tsm-cmd-N'`, and fish's integration evaluates its text,
+  ` eval (__tsm_collect '<dir>/tsm-cmd-N' $status)`), never as
   keystrokes through the line editor, so history expansion, completion, comments, syntax
   errors and continuation prompts can neither change it nor wedge the session; a line the
   shell never starts ends `lost` (`no-pre-execution-mark`). The plumbing stays out of every
@@ -614,7 +616,7 @@ and `screen` keep working on whatever program is in front.
 
 ### 8.1 Shell target
 
-Wait for the shell terminal to be available (G4); write the command to a file and type ` . '<dir>/tsm-cmd-N'` (G6); correlate the `C` whose command line is that one, and the following `D`, to this `runId`; the result's output is the transcript and raw decoded text between `C` and `D`, attributed temporally (G12); the exit is `D`'s payload. The command file stays in `<dataDir>/sessions/<name>/shell/`, a real daemon-owned 0700 directory checked before the shell starts and shared by the daemon's write and the shell's later source. Shell integration identifies daemon commands by the final `tsm-cmd-N` filename, not the parent directory's text.
+Wait for the shell terminal to be available (G4); write the command to a file and type ` . '<dir>/tsm-cmd-N'`, in fish without its integration ` source '<dir>/tsm-cmd-N'`, or, with fish's integration, its `eval` line (G6); correlate the `C` whose command line is that one, and the following `D`, to this `runId`; the result's output is the transcript and raw decoded text between `C` and `D`, attributed temporally (G12); the exit is `D`'s payload. The command file stays in `<dataDir>/sessions/<name>/shell/`, a real daemon-owned 0700 directory checked before the shell starts and shared by the daemon's write and the shell's later source. Shell integration identifies daemon commands by the final `tsm-cmd-N` filename, not the parent directory's text.
 
 The longer source path may wrap on the live screen. Run output and retained history omit its echoed line. That live-screen readability cost is accepted in exchange for one per-session source path. Direct Session callers supply their own private per-session `tempDir`, which Session checks before spawning. A typed directory path with ASCII controls (C0 or DEL) is refused before shell start. A tab would trigger completion in the editor even inside a shell-quoted path.
 
