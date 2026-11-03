@@ -159,9 +159,14 @@ test('jr2-2/G10: closeAll releases the lock only after a session opened while it
   assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false, 'released at closeAll');
 });
 
-test('closeAll closes each session once: one whose seal threw stays live, and the lock is released', async (t) => {
+test('closeAll closes each session once: one whose seal threw stays live, is said in the log and not announced closed, and the lock is released', async (t) => {
   const dir = dataDir();
-  const reg = new SessionRegistry({ dataDir: dir, backend: fakeShellBackend(() => {}, { marks: 'rich' }), defaultShell: '/bin/bash', noUserRc: true });
+  const logs: Array<{ level: string; text: string }> = [];
+  const reg = new SessionRegistry({ dataDir: dir, backend: fakeShellBackend(() => {}, { marks: 'rich' }), defaultShell: '/bin/bash', noUserRc: true, log: (level, text) => logs.push({ level, text }) });
+  const announced: string[] = [];
+  reg.onChange((c) => {
+    if (c.type === 'closed') announced.push(c.id);
+  });
   const a = await reg.create({ id: 'a', owner: AGENT });
   const seal = a.journal.seal.bind(a.journal);
   let calls = 0;
@@ -174,6 +179,8 @@ test('closeAll closes each session once: one whose seal threw stays live, and th
   await reg.closeAll({ reason: 'daemon-shutdown' });
   assert.equal(calls, 1, 'closeAll tried the session once');
   assert.equal(reg.get('a')?.kind, 'live', 'the close threw before the session became history');
+  assert.deepEqual(announced, [], 'a session still live is not announced closed');
+  assert.ok(logs.some((l) => l.level === 'warn' && l.text.includes('session a could not be closed at shutdown') && l.text.includes('seal refused')), JSON.stringify(logs));
   assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false, 'released at closeAll');
 });
 

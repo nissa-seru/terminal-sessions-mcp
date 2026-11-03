@@ -1243,8 +1243,9 @@ export class SessionRegistry {
 
   /**
    * Close every live session (daemon shutdown). They reappear after a restart as history-only,
-   * not closed. Cursors are flushed and the data dir's lock released last: after the sessions
-   * opened while it ran are closed too, and no name's operation is pending.
+   * not closed. Cursors are flushed and the data dir's lock released last: after it has closed the
+   * sessions opened while it ran too, and no name's operation is pending. A session whose close
+   * throws before it becomes history is said in the log, stays live, and is not closed again.
    */
   async closeAll(opts: { graceful?: boolean; reason?: string } = {}): Promise<void> {
     const closed = new Set<LiveEntry>();
@@ -1260,10 +1261,10 @@ export class SessionRegistry {
               closed.add(slot.view as LiveEntry);
               try {
                 await this.closeLive(slot, { ...opts, persist: false });
-              } catch {
-                // closeLive has already turned it into history
+              } catch (e) {
+                if (slot.view.kind === 'live') this.opts.log?.('warn', `session ${slot.id} could not be closed at shutdown, and stays live: ${e instanceof Error ? e.message : String(e)}`, { session: slot.id });
               }
-              this.emit({ type: 'closed', id: slot.id });
+              if (slot.view.kind === 'history') this.emit({ type: 'closed', id: slot.id });
             }
           }).catch(() => undefined),
         ),
