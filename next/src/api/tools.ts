@@ -68,8 +68,8 @@ const render = (ctx: ToolContext, transcript: string, structured: Record<string,
 const TERMINAL = new Set(['exited', 'cancelled', 'lost']);
 
 /** A Run result, marked delivered (G28) and its read cursor advanced (G22) once the transport has written it (mcpl-1; the house's read of 1cabc6a, #22). */
-function runResult(ctx: ToolContext, r: RunResult): ToolResult {
-  const res = renderRun(r, ctx.resultText);
+function runResult(ctx: ToolContext, r: RunResult, opts: { queue?: boolean } = {}): ToolResult {
+  const res = renderRun(r, ctx.resultText, opts);
   const outcome = r.runId !== undefined && (TERMINAL.has(r.state) || r.service !== undefined);
   res.onSent = () => {
     if (outcome) ctx.app.outcomeSent(ctx.caller, r);
@@ -107,9 +107,11 @@ const BUSY_NEXT: Record<string, string> = {
   exited: 'the shell has exited: run again to start a new one',
 };
 
+const START_BUSY_NEXT = 'start takes no queue: start again once the shell is free, or give the service a session of its own';
+
 const SET_E_NOTE = 'set -e belongs inside scripts and subshells, not in a session shell, where it makes every later failing command end the whole shell';
 
-function runStatus(r: RunResult): string {
+function runStatus(r: RunResult, queue = true): string {
   switch (r.state) {
     case 'exited': {
       // A hint, never evidence: the line turned on set -e in the shell it ran in, where it stays on.
@@ -163,12 +165,13 @@ function runStatus(r: RunResult): string {
     case 'busy': {
       const b = r.busy;
       const who = b?.runId ? ` ${b.runId}${b.principal ? ` by ${b.principal}` : ''}${b.line ? ` (${b.line})` : ''}` : '';
-      return `busy: ${b?.reason ?? 'unknown'}${who} — nothing was run; ${BUSY_NEXT[b?.reason ?? ''] ?? 'retry later, or pass queue:true'}`;
+      const next = BUSY_NEXT[b?.reason ?? ''] ?? 'retry later, or pass queue:true';
+      return `busy: ${b?.reason ?? 'unknown'}${who} — nothing was run; ${queue || !next.includes('queue:true') ? next : START_BUSY_NEXT}`;
     }
   }
 }
 
-export function renderRun(r: RunResult, mode: ResultText): ToolResult {
+export function renderRun(r: RunResult, mode: ResultText, opts: { queue?: boolean } = {}): ToolResult {
   const structured = env(r);
   if (mode === 'json') return { text: JSON.stringify(r, null, 2), structured };
   const head = r.state === 'busy' ? '' : r.output.text ? r.output.text + '\n' : '';
@@ -180,7 +183,7 @@ export function renderRun(r: RunResult, mode: ResultText): ToolResult {
     r.shell !== undefined ? 'cwd unknown (declared shell)' : r.integration === 'none' ? 'cwd unknown (integration none: only daemon runs have boundaries)' : `cwd ${r.cwd}`;
   const basis = r.target === 'process' && r.envBasis ? ` · env ${r.envBasis}` : '';
   const ignored = r.ignored?.length ? ` · ignored: ${r.ignored.join(', ')} (the session exists; cd in the command instead)` : '';
-  const status = `[run ${r.runId ?? '—'} ${runStatus(r)}${service} · ${r.target}${where}${basis} · ${cwd} · next=${r.output.nextCursor}${r.output.truncated ? ' · truncated' : ''}${r.created ? ' · session created' : ''}${ignored}${r.replayed ? ' · replayed' : ''}]`;
+  const status = `[run ${r.runId ?? '—'} ${runStatus(r, opts.queue !== false)}${service} · ${r.target}${where}${basis} · ${cwd} · next=${r.output.nextCursor}${r.output.truncated ? ' · truncated' : ''}${r.created ? ' · session created' : ''}${ignored}${r.replayed ? ' · replayed' : ''}]`;
   return { text: head + status, structured };
 }
 
@@ -843,7 +846,7 @@ export const TOOLS: ToolDef[] = [
     },
     outputSchema: RUN_OUTPUT,
     async run(ctx, a) {
-      return runResult(ctx, await ctx.app.start(ctx.caller, pick(a, ['session', 'command', 'name', 'target', 'ready', 'fail', 'health', 'wait', 'cwd', 'envBasis', 'idempotencyKey'])));
+      return runResult(ctx, await ctx.app.start(ctx.caller, pick(a, ['session', 'command', 'name', 'target', 'ready', 'fail', 'health', 'wait', 'cwd', 'envBasis', 'idempotencyKey'])), { queue: false });
     },
   },
   {
