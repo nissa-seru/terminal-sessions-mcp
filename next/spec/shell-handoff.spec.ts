@@ -200,8 +200,8 @@ for (const [how, rc] of [
 test('/bin/bash: a background job started at the prompt before `exec bash` does not hold the reinit back', { skip: !hasShell('/bin/bash') }, async () => {
   // A job started at a prompt keeps its own process group and stays the shell's child across the exec.
   // Counting any child, the gate never typed the reinit and the session ended unavailable with a note
-  // blaming a program the rc started; the check now asks for a child in the shell's own group, which
-  // only an rc's program is (a reviewer's read of the fixes for #22 comment 6269901528).
+  // blaming a program the rc started; the check now asks whether a process other than the shell holds
+  // the terminal for input, which a background job doesn't (a reviewer's read of the fixes for #22 comment 6269901528).
   const x = await realSession('/bin/bash', { login: false, rc: { '.bashrc': "PROMPT_COMMAND='history -a'\n" }, startupCapMs: 1500 });
   let bg: number | undefined;
   try {
