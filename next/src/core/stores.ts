@@ -436,8 +436,8 @@ export interface FileStoreOptions {
    * Rotated files whose newest event is older than this are dropped (G21). Default: no limit.
    * Age applies per file: the active file is rotated once its oldest event is past the
    * cutoff (at the next append, or at `expire()`), and a file straddling the cutoff stays
-   * whole until its newest event ages out. Content therefore outlives `maxAgeMs` by at
-   * most one file's span.
+   * whole until its newest event ages out. Content outlives `maxAgeMs` by at most a
+   * file's span and the wait for that append or `expire()`.
    */
   maxAgeMs?: number;
   now?: () => number;
