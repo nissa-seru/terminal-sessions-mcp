@@ -37,12 +37,13 @@ for (const shell of ['/bin/zsh', '/bin/bash'].filter(hasShell)) {
       ATUIN_AUTO_SYNC: 'false',
     };
     if (process.env.GHOSTTY_RESOURCES_DIR) env.GHOSTTY_RESOURCES_DIR = process.env.GHOSTTY_RESOURCES_DIR;
-    const x = await realSession(shell, { daemonEnv: { ...process.env }, env });
+    const x = await realSession(shell, { daemonEnv: { ...process.env }, env, userHome: true });
     try {
       assert.equal(x.session.integration, 'rich', `integration with the real rc (start ${x.startMs} ms)`);
       assert.ok(await x.session.waitAvailable(2000), 'the prompt confirmed the shell is available');
       assert.equal(x.session.state, 'idle');
       const lines: Array<[string, (r: { exit?: number; text: string }) => void]> = [
+        ['printf %s "$HOME"', (r) => assert.equal(r.text, os.homedir(), 'the developer\'s own HOME')],
         ['echo hi', (r) => assert.equal(r.text, 'hi')],
         ['false', (r) => assert.equal(r.exit, 1)],
         ['# a note', (r) => assert.equal(r.exit, 0)],

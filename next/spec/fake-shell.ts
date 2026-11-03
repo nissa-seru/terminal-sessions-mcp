@@ -513,6 +513,8 @@ export interface RealOptions {
   control?: 'seat' | 'owner-priority' | 'open';
   /** false: start the shell without its integration, so its Runs take the marker strategy. */
   integration?: false;
+  /** The opt-in real-rc spec's: the shell keeps the developer's own HOME, XDG directories and ZDOTDIR from `daemonEnv`, so it reads their rc files. */
+  userHome?: true;
 }
 
 export interface Real {
@@ -544,19 +546,20 @@ export async function realSession(shell: string, opts: RealOptions = {}): Promis
     fs.mkdirSync(path.dirname(path.join(home, f)), { recursive: true });
     fs.writeFileSync(path.join(home, f), body);
   }
-  const userEnv: NodeJS.ProcessEnv = { HOME: home };
+  const callerEnv = opts.daemonEnv ?? process.env;
+  const userEnv: NodeJS.ProcessEnv = opts.userHome ? { ...callerEnv } : { HOME: home };
   if (opts.userZdotdir !== undefined) userEnv.ZDOTDIR = opts.userZdotdir.replace(/^~\//, `${home}/`);
   const integ = prepareIntegration(shell, { noUserRc: opts.noUserRc ?? false, userEnv, dir: path.join(tmp, 'integration') });
   const journal = new Journal();
-  const daemonEnv: NodeJS.ProcessEnv = {
-    ...(opts.daemonEnv ?? process.env),
+  const daemonEnv: NodeJS.ProcessEnv = opts.userHome ? { ...callerEnv } : {
+    ...callerEnv,
     HOME: home,
     XDG_CONFIG_HOME: path.join(home, '.config'),
     XDG_DATA_HOME: path.join(home, '.local', 'share'),
     XDG_CACHE_HOME: path.join(home, '.cache'),
     XDG_STATE_HOME: path.join(home, '.local', 'state'),
   };
-  delete daemonEnv.ZDOTDIR;
+  if (!opts.userHome) delete daemonEnv.ZDOTDIR;
   const so: Parameters<typeof Session.start>[0] = {
     id: 'real',
     owner: AGENT,
@@ -582,7 +585,7 @@ export async function realSession(shell: string, opts: RealOptions = {}): Promis
   return {
     session,
     journal,
-    home,
+    home: opts.userHome ? callerEnv.HOME ?? os.homedir() : home,
     tmp,
     startMs,
     integrationKey: integ.key,
