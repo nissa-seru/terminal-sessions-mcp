@@ -233,7 +233,7 @@ test('results name what to do next: queued, waiting for input, ignored cwd, inte
 
   await tool('run', { session: 'ux1', command: 'printf "a\\nNEEDLE here\\nb\\n"' });
   const found = await tool('search', { session: 'ux1', pattern: 'NEEDLE' });
-  const m = /\[read since=(\d+)(?: offset=(\d+))?\]/.exec(found.text);
+  const m = /\[read session=ux1 since=(\d+)(?: offset=(\d+))?\]/.exec(found.text);
   assert.ok(m, found.text);
   const page = await tool('read', { session: 'ux1', since: Number(m[1]), ...(m[2] ? { offset: Number(m[2]) } : {}) });
   assert.match(page.text, /NEEDLE here/, 'reading from the cursor includes the match');

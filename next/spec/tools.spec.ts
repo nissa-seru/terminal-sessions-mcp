@@ -123,13 +123,13 @@ test('renderRead: a tail marks a first line cut at its head, with the read from 
   // The house's read of the 38 commits (#22, comment 6274935728): neither mark had a test, and nothing called renderRead directly.
   const base: ReadResult = { session: 's', seq: [7, 9], nextCursor: 9, more: false, truncated: true, text: 'xyz' };
   const cut = renderRead({ ...base, lines: { requested: 2, returned: 1, cutHead: true, head: { since: 6, offset: 12 }, before: { until: 7, untilOffset: 12 } } }, 'transcript');
-  assert.equal(cut.text, 'xyz\n[read s seq 7–9 · 1 of 2 lines (the first cut at its head; from its head: read since=6 offset=12) · earlier: read tail=2 until=7 untilOffset=12 · next: since=9 · truncated]');
+  assert.equal(cut.text, 'xyz\n[read s seq 7–9 · 1 of 2 lines (the first cut at its head; from its head: read session=s since=6 offset=12) · earlier: read session=s tail=2 until=7 untilOffset=12 · next: since=9 · truncated]');
   const whole = renderRead({ ...base, truncated: false, lines: { requested: 3, returned: 3, before: { until: 6 } } }, 'transcript');
-  assert.equal(whole.text, 'xyz\n[read s seq 7–9 · 3 of 3 lines · earlier: read tail=3 until=6 · next: since=9]');
+  assert.equal(whole.text, 'xyz\n[read s seq 7–9 · 3 of 3 lines · earlier: read session=s tail=3 until=6 · next: since=9]');
   const first = renderRead({ ...base, truncated: false, lines: { requested: 5, returned: 2 } }, 'transcript');
   assert.equal(first.text, 'xyz\n[read s seq 7–9 · 2 of 5 lines · next: since=9]', 'nothing came before: no earlier read');
   const headOnly = renderRead({ ...base, lines: { requested: 1, returned: 1, cutHead: true, head: { since: 0 } } }, 'transcript');
-  assert.match(headOnly.text, / · 1 of 1 lines \(the first cut at its head; from its head: read since=0\) · next: since=9 · truncated\]$/);
+  assert.match(headOnly.text, / · 1 of 1 lines \(the first cut at its head; from its head: read session=s since=0\) · next: since=9 · truncated\]$/);
   for (const r of [cut, whole, first, headOnly]) validate(r.structured, TOOLS.find((t) => t.name === 'read')!.outputSchema!);
   assert.deepEqual((JSON.parse(renderRead({ ...base, lines: { requested: 2, returned: 1, before: { until: 7, untilOffset: 12 } } }, 'json').text) as ReadResult).lines!.before, { until: 7, untilOffset: 12 });
 });
@@ -148,13 +148,13 @@ test('renderRead: a Run tail’s advice names the Run and the tail’s since, an
   const base: ReadResult = { session: 's', runId: 'r1-ab', seq: [7, 9], nextCursor: 9, more: false, truncated: true, text: 'xyz' };
   const lines = { requested: 2, returned: 1, cutHead: true as const, head: { since: 6, offset: 12 }, before: { until: 7, untilOffset: 12 } };
   const run = renderRead({ ...base, lines }, 'transcript', { since: 3 });
-  assert.equal(run.text, 'xyz\n[read s run r1-ab seq 7–9 · 1 of 2 lines (the first cut at its head; from its head: read since=6 offset=12 runId=r1-ab) · earlier: read tail=2 until=7 untilOffset=12 since=3 runId=r1-ab · next: since=9 · truncated]');
+  assert.equal(run.text, 'xyz\n[read s run r1-ab seq 7–9 · 1 of 2 lines (the first cut at its head; from its head: read session=s since=6 offset=12 runId=r1-ab) · earlier: read session=s tail=2 until=7 untilOffset=12 since=3 runId=r1-ab · next: since=9 · truncated]');
   const { runId: _, ...session } = base;
   const begun = renderRead({ ...session, lines: { ...lines, begunBefore: true, head: { since: 6 }, before: { until: 6 } } }, 'transcript');
-  assert.equal(begun.text, 'xyz\n[read s seq 7–9 · 1 of 2 lines (the first cut at its head, begun before this page; on from where the earlier page ends: read since=6) · earlier: read tail=2 until=6 · next: since=9 · truncated]');
+  assert.equal(begun.text, 'xyz\n[read s seq 7–9 · 1 of 2 lines (the first cut at its head, begun before this page; on from where the earlier page ends: read session=s since=6) · earlier: read session=s tail=2 until=6 · next: since=9 · truncated]');
   // A head-first page of a Run with more after it, inside `until`: reading on keeps both.
   const page = renderRead({ ...base, truncated: false, more: true }, 'transcript', { since: 3, until: 40 });
-  assert.equal(page.text, 'xyz\n[read s run r1-ab seq 7–9 · next: since=9 · more: read since=9 until=40 runId=r1-ab]');
+  assert.equal(page.text, 'xyz\n[read s run r1-ab seq 7–9 · next: since=9 · more: read session=s since=9 until=40 runId=r1-ab]');
   for (const r of [run, begun, page]) validate(r.structured, TOOLS.find((t) => t.name === 'read')!.outputSchema!);
 });
 
@@ -178,17 +178,25 @@ test('the 33 commits 8: the read tool hands the request’s range to the status 
   };
   const base: ReadResult = { session: 's', runId: 'r1-ab', seq: [7, 9], nextCursor: 9, more: false, truncated: false, text: 'xyz' };
   const tail = await callTool('read', { session: 's', runId: 'r1-ab', tail: 2, since: 3 }, ctx(stub({ read: read({ ...base, lines: { requested: 2, returned: 2, before: { until: 7, untilOffset: 12 } } }) })), TOOLS);
-  assert.equal(tail.text, 'xyz\n[read s run r1-ab seq 7–9 · 2 of 2 lines · earlier: read tail=2 until=7 untilOffset=12 since=3 runId=r1-ab · next: since=9]');
+  assert.equal(tail.text, 'xyz\n[read s run r1-ab seq 7–9 · 2 of 2 lines · earlier: read session=s tail=2 until=7 untilOffset=12 since=3 runId=r1-ab · next: since=9]');
   const page = await callTool('read', { session: 's', runId: 'r1-ab', since: 3, until: 40 }, ctx(stub({ read: read({ ...base, more: true }) })), TOOLS);
-  assert.equal(page.text, 'xyz\n[read s run r1-ab seq 7–9 · next: since=9 · more: read since=9 until=40 runId=r1-ab]');
+  assert.equal(page.text, 'xyz\n[read s run r1-ab seq 7–9 · next: since=9 · more: read session=s since=9 until=40 runId=r1-ab]');
   assert.deepEqual(asked.map((o) => [o.since, o.until, o.tail, o.runId]), [[3, undefined, 2, 'r1-ab'], [3, 40, undefined, 'r1-ab']]);
+});
+
+test('read’s and search’s advice name every argument the next call needs: the session, an events page’s `as`, and search’s pattern, flags and Run', async () => {
+  const events: ReadResult = { session: 's', seq: [7, 9], nextCursor: 9, more: true, truncated: false, events: [] };
+  assert.match(renderRead(events, 'transcript', { since: 3, as: 'events' }).text, / · more: read session=s since=9 as=events\]$/);
+  const r = { session: 's', matches: [], scanned: [1, 40], more: true, stoppedBy: 'limit', nextCursor: 40, bounded: false } as SearchResult;
+  const text = (await callTool('search', { session: 's', pattern: 'a b', flags: 'i', runId: 'r1-ab', until: 90 }, ctx(stub({ search: async () => r })), TOOLS)).text;
+  assert.match(text, / · more \(limit\): search session=s pattern="a b" flags=i since=40 until=90 runId=r1-ab · /);
 });
 
 test('read’s status says when a tail reached back past the lines asked for, to the line written last', () => {
   // An independent read of the fix for the house's read of the 33 commits (#22, comment 6307350650): "3 of 1 lines" said nothing of why.
   const base: ReadResult = { session: 's', seq: [3, 4], nextCursor: 4, more: false, truncated: false, text: '[run r1]\nr1 line\n[terminal]\nPTY-UNFIN' };
   const r = renderRead({ ...base, lines: { requested: 1, returned: 2, before: { until: 3, untilOffset: 8 } } }, 'transcript');
-  assert.match(r.text, / · 2 of 1 lines, back to the line written last · earlier: read tail=1 until=3 untilOffset=8 · next: since=4\]$/);
+  assert.match(r.text, / · 2 of 1 lines, back to the line written last · earlier: read session=s tail=1 until=3 untilOffset=8 · next: since=4\]$/);
   assert.doesNotMatch(renderRead({ ...base, lines: { requested: 2, returned: 2 } }, 'transcript').text, /back to/);
 });
 
@@ -197,7 +205,7 @@ test("search and wait_for name a process Run line's pipe, and `mixed` when it ho
   const hit = (line: string, cursor: number, more: Record<string, unknown> = {}) => ({ seq: cursor + 1, lineNumber: 1, line, before: [], after: [], cursor, ...more });
   const r = { session: 's', matches: [hit('both', 7, { stream: 'stderr', mixed: true }), hit('out', 9, { stream: 'stdout' }), hit('pty', 11)], scanned: [1, 12], more: false, bounded: false } as SearchResult;
   const lines = (await search(r)).text.split('\n').filter((l) => l.startsWith('> '));
-  assert.deepEqual(lines, ['> both   [stderr · mixed · read since=7]', '> out   [stdout · read since=9]', '> pty   [read since=11]']);
+  assert.deepEqual(lines, ['> both   [stderr · mixed · read session=s since=7]', '> out   [stdout · read session=s since=9]', '> pty   [read session=s since=11]']);
   const wait = async (w: Record<string, unknown>) => (await callTool('wait_for', { session: 's', pattern: 'x' }, ctx(stub({ waitFor: async () => w })), TOOLS)).text;
   const base = { session: 's', matched: true, kind: 'pattern', line: 'boom', seq: 7, elapsedMs: 12, nextCursor: 8 };
   assert.equal(await wait({ ...base, stream: 'stderr', mixed: true }), '[pattern matched after 12ms: boom · stderr · mixed · seq 7]');
@@ -208,7 +216,7 @@ test("search and wait_for name a process Run line's pipe, and `mixed` when it ho
 test("wait_for's text says where its matching line starts, a cursor of 0 and an offset included (an independent read of the fixes for the review of 4f4c067..a8b6f28, PR #22)", async () => {
   const wait = async (w: Record<string, unknown>) => (await callTool('wait_for', { session: 's', pattern: 'x' }, ctx(stub({ waitFor: async () => w })), TOOLS)).text;
   const base = { session: 's', matched: true, kind: 'pattern', line: 'boom', seq: 7, elapsedMs: 12, nextCursor: 8 };
-  assert.equal(await wait({ ...base, cursor: 0 }), '[pattern matched after 12ms: boom · seq 7 · read since=0]');
-  assert.equal(await wait({ ...base, cursor: 6, offset: 3 }), '[pattern matched after 12ms: boom · seq 7 · read since=6 offset=3]');
+  assert.equal(await wait({ ...base, cursor: 0 }), '[pattern matched after 12ms: boom · seq 7 · read session=s since=0]');
+  assert.equal(await wait({ ...base, cursor: 6, offset: 3 }), '[pattern matched after 12ms: boom · seq 7 · read session=s since=6 offset=3]');
   assert.equal(await wait(base), '[pattern matched after 12ms: boom · seq 7]');
 });

@@ -155,7 +155,7 @@ function runStatus(r: RunResult, queue = true): string {
           ? 'a full-screen program is open: look with screen, answer with input'
           : w?.kind === 'input'
             ? `it seems to wait for input (silent ${fmt(w.silentMs ?? 0)}, last line "${w.lastLine ?? ''}"): answer with input, or cancel`
-            : `it keeps running; await it, or read since=${r.output.nextCursor}`;
+            : `it keeps running; await it, or read session=${r.session} since=${r.output.nextCursor}`;
       // A hint, never evidence (§8.1): the line reads like one that opens another shell.
       const opened = r.target === 'shell' && r.shell === undefined && looksLikeShellOpener(r.line) ? ' — if it opened a shell (it looks like it did), declare that with session_declare_shell and run your commands in it' : '';
       const host = oneShotSshWithoutTty(r.line);
@@ -189,11 +189,11 @@ export function renderRun(r: RunResult, mode: ResultText, opts: { queue?: boolea
 
 /**
  * A read's result as text: the page, then a status line whose advice names every argument the read
- * it advises needs. `asked` is the request's range (`since`, `until`), which the result does not echo:
+ * it advises needs. `asked` is the request's range and form (`since`, `until`, `as`), which the result does not echo:
  * a Run's page or tail read on, or back, without its Run read the session, and an earlier page without
  * the request's `since` left its range (a reviewer's read of the fixes for #22).
  */
-export function renderRead(r: ReadResult, mode: ResultText, asked: { since?: Seq | undefined; until?: Seq | undefined } = {}): ToolResult {
+export function renderRead(r: ReadResult, mode: ResultText, asked: { since?: Seq | undefined; until?: Seq | undefined; as?: string | undefined } = {}): ToolResult {
   const structured = env(r);
   if (mode === 'json') return { text: JSON.stringify(r, null, 2), structured };
   const body = r.text !== undefined ? r.text : JSON.stringify(r.events, null, 1);
@@ -202,8 +202,9 @@ export function renderRead(r: ReadResult, mode: ResultText, asked: { since?: Seq
   // than asked for reach back to the line written last (ReadResult.lines).
   const unit = r.events !== undefined ? 'events' : 'lines';
   const back = r.lines && r.lines.returned > r.lines.requested ? ', back to the line written last' : '';
-  const lines = r.lines ? ` · ${r.lines.returned} of ${r.lines.requested} ${unit}${back}${tailMarks(r.lines, r.runId, asked.since)}` : '';
-  const more = r.more ? ` · more: read ${next}${argWords({ until: asked.until, runId: r.runId })}` : '';
+  const as = asked.as === 'text' ? undefined : asked.as;
+  const lines = r.lines ? ` · ${r.lines.returned} of ${r.lines.requested} ${unit}${back}${tailMarks(r.lines, { session: r.session, runId: r.runId, since: asked.since, as })}` : '';
+  const more = r.more ? ` · more: read${argWords({ session: r.session, since: r.nextCursor, offset: r.nextOffset || undefined, as, until: asked.until, runId: r.runId })}` : '';
   const status = `[read ${r.session}${r.runId ? ` run ${r.runId}` : ''} seq ${r.seq[0]}–${r.seq[1]}${lines} · next: ${next}${more}${r.splitLine ? ' · last line continues' : ''}${gapsBit(r)}${r.truncated ? ' · truncated' : ''}]`;
   return { text: (body ? body + '\n' : '') + status, structured };
 }
@@ -222,10 +223,11 @@ const argWords = (o: Record<string, string | number | undefined>): string =>
  * twice gets further back each time (the house's reads of 78c4d6e and of the 38 commits, #22; a
  * reviewer's read of the fixes for #22).
  */
-function tailMarks(l: NonNullable<ReadResult['lines']>, runId: string | undefined, since: Seq | undefined): string {
+function tailMarks(l: NonNullable<ReadResult['lines']>, o: { session: string; runId: string | undefined; since: Seq | undefined; as: string | undefined }): string {
+  const { session, runId, since, as } = o;
   const from = l.begunBefore ? ', begun before this page; on from where the earlier page ends' : '; from its head';
-  const head = l.cutHead ? ` (the first cut at its head${l.head ? `${from}: read${argWords({ since: l.head.since, offset: l.head.offset, runId })}` : ''})` : '';
-  const before = l.before ? ` · earlier: read${argWords({ tail: l.requested, until: l.before.until, untilOffset: l.before.untilOffset, since, runId })}` : '';
+  const head = l.cutHead ? ` (the first cut at its head${l.head ? `${from}: read${argWords({ session, since: l.head.since, offset: l.head.offset, as, runId })}` : ''})` : '';
+  const before = l.before ? ` · earlier: read${argWords({ session, tail: l.requested, until: l.before.until, untilOffset: l.before.untilOffset, since, as, runId })}` : '';
   return head + before;
 }
 
@@ -235,12 +237,17 @@ const gapsBit = (r: { gap?: GapInfo; gaps?: GapInfo[] }): string => item(gapsTex
 const pipeOf = (h: { stream?: string; mixed?: boolean }): string => (h.stream ? `${h.stream}${h.mixed ? ' · mixed' : ''}` : '');
 const item = (text: string | undefined): string => (text ? ` · ${text}` : '');
 
-export function renderSearch(r: SearchResult, mode: ResultText): ToolResult {
+export function renderSearch(
+  r: SearchResult,
+  mode: ResultText,
+  asked: { pattern?: string; flags?: string; context?: number; until?: Seq; runId?: string; limit?: number } = {},
+): ToolResult {
   const structured = env(r);
   if (mode === 'json') return { text: JSON.stringify(r, null, 2), structured };
-  const at = (c: number, o?: number) => `since=${c}${o ? ` offset=${o}` : ''}`;
-  const body = r.matches.map((m) => [...m.before.map((l) => `  ${l}`), `> ${m.line}   [${m.stream ? `${pipeOf(m)} · ` : ''}read ${at(m.cursor, m.offset)}]`, ...m.after.map((l) => `  ${l}`)].join('\n')).join('\n--\n');
-  const more = r.more ? ` · more (${r.stoppedBy ?? 'limit'}): search ${at(r.nextCursor ?? r.scanned[1], r.nextOffset)}` : '';
+  const body = r.matches.map((m) => [...m.before.map((l) => `  ${l}`), `> ${m.line}   [${m.stream ? `${pipeOf(m)} · ` : ''}read${argWords({ session: r.session, since: m.cursor, offset: m.offset || undefined })}]`, ...m.after.map((l) => `  ${l}`)].join('\n')).join('\n--\n');
+  const pattern = asked.pattern !== undefined ? JSON.stringify(asked.pattern) : undefined;
+  const again = argWords({ session: r.session, pattern, flags: asked.flags, context: asked.context, since: r.nextCursor ?? r.scanned[1], offset: r.nextOffset || undefined, until: asked.until, runId: asked.runId, limit: asked.limit });
+  const more = r.more ? ` · more (${r.stoppedBy ?? 'limit'}): search${again}` : '';
   // What the scan did not see, as the envelope says it and as read's status line does: the holes it
   // spanned, and the lines longer than the match window, searched on their head only; without
   // these, `(no matches)` read as a whole answer (the house's read of 1cabc6a, #22).
@@ -935,7 +942,7 @@ export const TOOLS: ToolDef[] = [
       const r = await ctx.app.waitFor(ctx.caller, pick(a, ['session', 'pattern', 'silenceMs', 'idle', 'runId', 'since', 'wait']));
       // A match on a clipped line is said in the text, in the words search's status and the watch notice use (headOnlyText); only `--json` showed `clipped` (the house's read of the 38 commits, #22 comment 6274806357).
       const clipped = r.clipped ? ` · ${headOnlyText()}` : '';
-      const from = r.cursor !== undefined ? ` · read since=${r.cursor}${r.offset ? ` offset=${r.offset}` : ''}` : '';
+      const from = r.cursor !== undefined ? ` · read session=${r.session} since=${r.cursor}${r.offset ? ` offset=${r.offset}` : ''}` : '';
       const text = r.matched ? `[${r.kind} matched after ${fmt(r.elapsedMs)}${r.line ? `: ${r.line}` : r.match ? `: ${r.match}` : ''}${item(pipeOf(r))}${r.seq !== undefined ? ` · seq ${r.seq}` : ''}${from}${clipped}]` : `[no ${r.kind} match${r.reason ? ` · ${r.reason}` : ` within ${fmt(r.elapsedMs)}`} · next=${r.nextCursor}]`;
       return render(ctx, text, env(r));
     },
@@ -969,7 +976,8 @@ export const TOOLS: ToolDef[] = [
     },
     outputSchema: SEARCH_OUTPUT,
     async run(ctx, a) {
-      return renderSearch(await ctx.app.search(ctx.caller, pick(a, ['session', 'pattern', 'flags', 'context', 'since', 'offset', 'until', 'runId', 'limit'])), ctx.resultText);
+      const o = pick<Parameters<App['search']>[1]>(a, ['session', 'pattern', 'flags', 'context', 'since', 'offset', 'until', 'runId', 'limit']);
+      return renderSearch(await ctx.app.search(ctx.caller, o), ctx.resultText, o);
     },
   },
   ...COMPAT_TOOLS,
