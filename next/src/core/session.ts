@@ -2978,7 +2978,8 @@ export class Session {
    * The Run's attributed output events (G12), with the journal's gap marker when retention
    * cut it; `range` narrows it (see RunOutputRange). A page costs what the page covers, not
    * the whole Run (er-11): the journal is read in bounded pages from the cursor, or from
-   * the end backwards for `maxBytes`. The result equals narrowOutput over the whole Run.
+   * the end backwards for `maxBytes`. The result equals narrowOutput over the whole Run,
+   * except that a hole outside the range doesn't make it `truncated`.
    */
   runOutput(runId: string, range: RunOutputRange = {}): RunOutput {
     const run = this.getRun(runId);
