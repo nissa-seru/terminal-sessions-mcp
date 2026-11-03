@@ -3452,6 +3452,11 @@ export class Session {
     return this.cwdPath;
   }
 
+  get runFlavor(): ShellFlavor {
+    const layer = this.layers.at(-1);
+    return layer ? declaredFlavor(layer.shell) : this.flavor;
+  }
+
   get exit(): PtyExit | undefined {
     return this.exitInfo;
   }
