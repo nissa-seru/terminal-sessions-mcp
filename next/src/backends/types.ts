@@ -13,7 +13,7 @@ export interface SpawnShellOptions {
   rows: number;
   /**
    * The integration's mark key, out of band: never part of the child's environment. With a
-   * `launcher`, the backend starts it (`/bin/sh launcher shell args…`) and it writes the key to
+   * `launcher`, the backend starts it (`bash -p launcher shell args…`) and it writes the key to
    * a private file for the shell's PID before exec'ing the shell.
    */
   bootstrap?: { key: string; launcher?: string };
