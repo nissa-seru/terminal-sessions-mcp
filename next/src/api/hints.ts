@@ -28,9 +28,13 @@ function ownWords(line: string): string {
   const emit = (s: string) => {
     if (depth === 0) out += s;
   };
+  /** The next character starts a word: the line's start, or after an unescaped space, separator or parenthesis. */
+  let wordStart = true;
   for (let i = 0; i < line.length; ) {
     const c = line[i]!;
     if (c === '\\') {
+      // An escaped character is part of a word; an escaped newline is removed, and changes nothing.
+      if (line[i + 1] !== '\n') wordStart = false;
       emit(' ');
       i += 2;
     } else if (c === "'" || c === '"' || c === '`') {
@@ -38,20 +42,24 @@ function ownWords(line: string): string {
       while (j < line.length && line[j] !== c) j += c !== "'" && line[j] === '\\' ? 2 : 1;
       emit(' ');
       i = j + 1;
+      wordStart = false;
     } else if (c === '(') {
       emit(' ');
       depth++;
       i++;
+      wordStart = true;
     } else if (c === ')') {
       depth = Math.max(0, depth - 1);
       emit(' ');
       i++;
+      wordStart = true;
     } else if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<') {
       const m = /^<<-?\s*(?:'([^']*)'|"([^"]*)"|\\?([^\s;&|<>()]+))/.exec(line.slice(i));
       if (m) pending.push(m[1] ?? m[2] ?? m[3]!);
       emit(' ');
       i += m ? m[0].length : 2;
-    } else if (c === '#' && (i === 0 || /[\s;&|()]/.test(line[i - 1]!))) {
+      wordStart = false;
+    } else if (c === '#' && wordStart) {
       const nl = line.indexOf('\n', i);
       i = nl < 0 ? line.length : nl;
     } else if (c === '\n' && pending.length) {
@@ -67,9 +75,11 @@ function ownWords(line: string): string {
       }
       emit('\n');
       i = j;
+      wordStart = true;
     } else {
       emit(c);
       i++;
+      wordStart = /[\s;&|]/.test(c);
     }
   }
   return out;
