@@ -86,7 +86,7 @@ function child(src: string, opts: { stdin?: boolean } = {}): { proc: ChildProces
 
 const readLock = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, LOCK_FILE), 'utf8')) as { pid: number; startedAt: number; hostname: string };
 
-test('jr2-2/tsg-1/G10: a registry refuses a data dir another live process holds, before it writes a byte', async () => {
+test('jr2-2/tsg-1/G10: a registry refuses a data dir another live process holds, before it writes to a journal', async () => {
   const dir = dataDir();
   // A journal with a Run in flight: recovery would end it `lost` and mark the restart.
   const sdir = path.join(dir, 'sessions', 'w');
