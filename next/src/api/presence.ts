@@ -76,9 +76,9 @@ function lineFor(app: App, s: AnySession, principal: Principal): { text: string;
   const bits: string[] = [];
 
   if (s.kind === 'history') {
-    // The shell is gone: nothing can change here any more, so only Runs that ended since
-    // the reader last looked are news — above all those the restart or close made lost.
-    if (!ended.length) return undefined;
+    // The shell is gone: nothing can change here any more, so only what ended or was written
+    // since the reader last looked is news — above all Runs the restart or close made lost.
+    if (!ended.length && unread.bytes === 0) return undefined;
     bits.push(s.closed ? 'closed' : 'shell gone (daemon restarted; history only)');
     if (unread.bytes > 0) bits.push(`${unread.bounded ? '≥ ' : ''}${fmtBytes(unread.bytes)} of output you have not read (read since=${read})`);
     pushEnded(bits, ended, principal);
