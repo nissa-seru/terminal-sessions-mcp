@@ -88,7 +88,7 @@ finished. A failed call comes back as an error result whose text opens with the 
 result also carries each command's status (`pipeStatus`, from a shell with its integration, not from
 one without it or a declared shell, whose end markers carry `$?` alone), and then the status line says when one before
 the last failed, since `make | tee log` exits as `tee` did; a producer that `head` stopped reading
-(status 141, SIGPIPE) is not called a failure. The text block is the transcript when the connection asks for it
+(status 141, SIGPIPE) is not called a failure when the last command succeeded. The text block is the transcript when the connection asks for it
 (`TSM_RESULT_TEXT=transcript` for the shim, `?resultText=transcript` on the URL; the
 shipped configs set it) and the envelope as JSON otherwise — the default, for hosts whose
 scripts parse a tool's text (agent-framework's code execution hands its scripts
