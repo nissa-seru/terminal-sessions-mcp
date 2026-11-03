@@ -827,6 +827,7 @@ export class App {
     // survives until the replay's transport write; a spread would drop it.
     again.replayed = true;
     if (prev.created) again.created = true;
+    if (prev.ignored) again.ignored = prev.ignored;
     return again;
   }
 
@@ -1163,6 +1164,7 @@ export class App {
         res.replayed = true;
         // The first call created the session: its replay says so too, as a replayed run does (the house's read of 1cabc6a, #22).
         if (prev.created) res.created = true;
+        if (prev.ignored) res.ignored = prev.ignored;
         return res;
       },
       { keep: remembered, compact: compactRun, recover: (idem) => this.recoverRun(idem) },

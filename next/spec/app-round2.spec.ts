@@ -191,6 +191,24 @@ test('G16: a replay after the session was forgotten returns the first outcome (a
   }
 });
 
+test('G16: a keyed run or start replayed in an existing session says it ignored the cwd, as its first result did', async () => {
+  await tool('session_open', { session: 'ign1' });
+  const k = `ign-run-${Date.now()}`;
+  const ran = await tool('run', { session: 'ign1', command: 'echo here', cwd: os.tmpdir(), idempotencyKey: k });
+  assert.deepEqual(ran.structured?.ignored, ['cwd'], ran.text);
+  const ranAgain = await tool('run', { session: 'ign1', command: 'echo here', cwd: os.tmpdir(), idempotencyKey: k });
+  assert.equal(ranAgain.structured?.replayed, true, ranAgain.text);
+  assert.deepEqual(ranAgain.structured?.ignored, ['cwd'], ranAgain.text);
+  const ks = `ign-start-${Date.now()}`;
+  const start = { session: 'ign1', command: 'sleep 30', target: 'process', cwd: os.tmpdir(), wait: 0, idempotencyKey: ks };
+  const started = await tool('start', start);
+  assert.deepEqual(started.structured?.ignored, ['cwd'], started.text);
+  const startedAgain = await tool('start', start);
+  assert.equal(startedAgain.structured?.replayed, true, startedAgain.text);
+  assert.deepEqual(startedAgain.structured?.ignored, ['cwd'], startedAgain.text);
+  await tool('cancel', { session: 'ign1', runId: started.structured?.runId });
+});
+
 test('G30: cancel on an earlier life’s Run returns its recorded outcome (jr2-13); watches survive a new life (m2-14); wait_for refuses an exited shell (m2-24)', async () => {
   const r = await tool('run', { session: 'lives', command: 'echo first-life' });
   await tool('watch', { session: 'lives', pattern: 'DEPLOYED', label: 'deploy' });
