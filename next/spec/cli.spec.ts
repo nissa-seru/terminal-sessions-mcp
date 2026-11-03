@@ -364,7 +364,7 @@ test('after --, a first word that a shell reads as a keyword names the program, 
   }
 });
 
-test('ux-18: after --, each word is one argument of the command under sh, bash, zsh, dash and fish', async () => {
+test('ux-18: after --, each word is one argument of the command under each of sh, bash, zsh, dash and fish that is installed', async (t) => {
   const d = await cannedDaemon({ run: { runId: 'r1', state: 'exited', exit: 0 } });
   const env = { TSM_URL: `ws://127.0.0.1:${d.port}` };
   try {
@@ -375,8 +375,10 @@ test('ux-18: after --, each word is one argument of the command under sh, bash, 
     assert.equal(r.code, 0, r.stderr);
     const command = d.calls[0]!.arguments.command as string;
     assert.ok(command.startsWith('printf '), command);
-    const shells = ['/bin/sh', '/bin/bash', '/bin/zsh', '/bin/dash', '/usr/bin/fish', '/opt/homebrew/bin/fish', '/usr/local/bin/fish'].filter((s) => fs.existsSync(s));
+    const known = ['/bin/sh', '/bin/bash', '/bin/zsh', '/bin/dash', '/usr/bin/fish', '/opt/homebrew/bin/fish', '/usr/local/bin/fish'];
+    const shells = known.filter((s) => fs.existsSync(s));
     assert.ok(shells.length >= 2, `shells found: ${shells.join(', ')}`);
+    t.diagnostic(`shells run: ${shells.join(', ')}; not installed: ${known.filter((s) => !shells.includes(s)).join(', ') || 'none'}`);
     for (const shell of shells) {
       const out = await new Promise<string>((resolve, reject) => execFile(shell, ['-c', command], { env: { PATH: '/usr/bin:/bin', HOME: tmp } }, (e, stdout, stderr) => (e ? reject(new Error(`${shell}: ${e.message} ${stderr}`)) : resolve(stdout))));
       assert.equal(out, `${words.map((w) => `[${w}]`).join('\n')}\n`, shell);
