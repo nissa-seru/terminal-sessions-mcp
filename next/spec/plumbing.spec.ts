@@ -235,7 +235,8 @@ test('a probe’s echo broken over two lines is struck on every line it spans, t
   // Broken after the nonce, or between the format and its arguments: the rest of the typed line is struck too.
   const afterNonce = probe.replace(`${nonce}:`, () => `${nonce}\r\n:`);
   assert.equal(cutPlumbing(`\r\nout\r\n^C\r\n$${afterNonce}\r\n<<<PROBE:${nonce}:1000:${nonce}>>>\r\n$ `, inline), 'out\r\n^C\r\n');
-  const inArgs = probe.replace(`' "$$"`, () => `'\r\n "$$"`);
+  const inArgs = probe.replace(`' "$(`, () => `'\r\n "$(`);
+  assert.ok([brokenInNonce, afterNonce, inArgs].every((broken) => broken !== probe), 'each break lands in the probe');
   assert.equal(cutPlumbing(`\r\nout\r\n^C${inArgs}\r\nmore\r\n<<<EXIT:${nonce}:0>>>`, inline), 'out\r\n^C\r\nmore\r\n', 'an unanswered probe: its echo struck, the ^C before it and the output after it kept');
   const fish = inlineProbe(nonce, true).replace('$fish_pid', () => '\r\n$fish_pid');
   assert.equal(cutPlumbing(`\r\nout\r\n${fish}\r\nmore\r\n<<<EXIT:${nonce}:0>>>`, inline), 'out\r\nmore\r\n', 'fish’s probe line');
