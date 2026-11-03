@@ -11,6 +11,7 @@ import type { Journal } from '../src/core/journal.js';
 import type { JournalEvent } from '../src/core/types.js';
 import { clocks } from '../src/core/clock.js';
 import { Segmenter, type Segment } from '../src/core/segmenter.js';
+import { serviceOutcomeKey } from '../src/core/session.js';
 import { AGENT, HUMAN, scriptedSession as harness, until } from './fake-shell.js';
 
 const types = (j: Journal, from = 0) => j.since(from).events.map((e) => e.type);
@@ -449,6 +450,28 @@ test('a session keeps at most 1,000 ended Runs in memory; older ones are read fr
   for (let i = 0; i < 10; i++) h.session.admit({ target: 'process', argv: ['true'], principal: AGENT });
   await new Promise((r) => setTimeout(r, 100));
   assert.throws(() => h.session.run(orphaned.run.runId), (e: { code?: string }) => e.code === 'run_not_found', 'gone once its group is');
+  await h.session.close();
+});
+
+test('a Run pruned from memory takes its delivered outcomes with it, the service statuses a start result carried included', async () => {
+  const h = await harness();
+  h.backend.onSpawnProcess = (p) => queueMicrotask(() => p.exit({ exitCode: 0 }));
+  const a = h.session.admit({ target: 'process', argv: ['true'], principal: AGENT });
+  assert.ok(a.admitted);
+  await until(() => h.session.run(a.run.runId).state === 'exited', 3000);
+  const service = serviceOutcomeKey(a.run.runId, 'ready', 7);
+  h.session.markOutcomeDelivered(a.run.runId, AGENT);
+  h.session.markOutcomeDelivered(service, AGENT);
+  const ids: string[] = [];
+  for (let i = 0; i < 1100; i++) {
+    const b = h.session.admit({ target: 'process', argv: ['true'], principal: AGENT });
+    assert.ok(b.admitted);
+    ids.push(b.run.runId);
+  }
+  await until(() => h.session.run(ids.at(-1)!).state === 'exited', 5000, 'the last Run to end');
+  assert.throws(() => h.session.run(a.run.runId), (e: { code?: string }) => e.code === 'run_not_found', 'the first Run was pruned');
+  assert.equal(h.session.outcomeDeliveredTo(a.run.runId, AGENT), false);
+  assert.equal(h.session.outcomeDeliveredTo(service, AGENT), false, 'its service status goes with it');
   await h.session.close();
 });
 

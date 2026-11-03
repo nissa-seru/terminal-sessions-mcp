@@ -1805,6 +1805,8 @@ export class Session {
       if (r.target === 'process' && (r.process?.groupAlive?.() ?? false)) continue;
       this.runs.delete(id);
       this.outcomeDelivered.delete(id);
+      const service = serviceOutcomePrefix(id);
+      for (const key of this.outcomeDelivered.keys()) if (key.startsWith(service)) this.outcomeDelivered.delete(key);
     }
   }
 
@@ -3516,4 +3518,5 @@ export function isTerminal(state: RunState): boolean {
  * (G28, mcpl-13): that one event, so a later return to the same status is announced as usual (the
  * house's read of 2f357bd, #22). Spelled here, once, for the App that marks it and the lane that asks.
  */
-export const serviceOutcomeKey = (runId: string, status: string, seq: Seq): string => `${runId}:service=${status}@${seq}`;
+export const serviceOutcomeKey = (runId: string, status: string, seq: Seq): string => `${serviceOutcomePrefix(runId)}${status}@${seq}`;
+const serviceOutcomePrefix = (runId: string): string => `${runId}:service=`;
