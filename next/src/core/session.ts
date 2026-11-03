@@ -2393,7 +2393,7 @@ export class Session {
   }
 
   private writeTempFile(body: string, capturePipeStatus = false, markerNonce?: string): string {
-    // Typed (and echoed at the prompt) as ` . '<dir>/tsm-cmd-N'`: the command file
+    // Typed (and echoed at the prompt) by sourceLine's line: the command file
     // stays in this Session's private directory until the Run ends.
     const name = commandFile(++this.tempCounter);
     let text = body.endsWith('\n') ? body : body + '\n';
