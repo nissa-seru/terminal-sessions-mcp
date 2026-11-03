@@ -1,9 +1,9 @@
 /**
  * Services (§8.3, G9): the status a service reports and the evidence behind it.
- * The monitor's rules against a journal driven by hand (no PTY), then the same
- * rules end to end against real bash and real processes: no probe never means
- * ready (m2-1, atc-7), a lost Run is `lost` (m2-6), fail beats health (m2-15),
- * one message per transition (m2-16), per-stream matching (m2-21) beside the one source a read shows.
+ * The monitor's rules against a journal driven by hand (no PTY), one message per
+ * transition (m2-16) among them, then end to end against real bash and real
+ * processes: no probe never means ready (m2-1, atc-7), a lost Run is `lost` (m2-6),
+ * fail beats health (m2-15), per-stream matching (m2-21) beside the one source a read shows.
  */
 import { test, before, after, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
