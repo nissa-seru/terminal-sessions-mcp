@@ -587,7 +587,8 @@ interface Grant {
   seq: number;
   unanswered?: true;
 }
-const replay: { initialize?: Parsed; initialized?: Parsed; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, { m: Parsed; seq: number }> } = {
+const replay: { initialize?: Parsed; initialized?: Parsed; since: number; grant?: Grant; refused: Grant[]; reduced: Map<string, number>; channels: Map<string, { m: Parsed; seq: number }> } = {
+  since: 0,
   refused: [],
   reduced: new Map(),
   channels: new Map(),
@@ -647,6 +648,8 @@ function answered(p: Pending, m: Parsed): void {
   if (p.method === 'featureSets/update') return grantAnswered(p, m);
   if (m.error !== undefined) return; // the host saw the refusal; its picture is as before
   if (p.method === 'initialize') {
+    if (p.seq < replay.since) return;
+    replay.since = p.seq;
     replay.initialize = p.m;
     if (replay.grant && replay.grant.seq < p.seq) delete replay.grant;
     replay.refused = replay.refused.filter((r) => r.seq > p.seq);
@@ -667,6 +670,7 @@ function answered(p: Pending, m: Parsed): void {
  * Refused without running (the in-flight bound says `executed: false`), it changed nothing.
  */
 function grantAnswered(p: Pending, m: Parsed): void {
+  if (p.seq < replay.since) return;
   if (m.error === undefined) {
     replay.grant = { m: p.m, seq: p.seq };
     replay.refused = replay.refused.filter((r) => r.seq > p.seq);
@@ -697,7 +701,7 @@ function grantUnanswered(p: Pending): void {
 /** A channels/open the daemon accepted: remember the channel (by the id the daemon gave it) until the host closes it. */
 function opened(p: Pending, m: Parsed): void {
   const channel = isObj(m.result) && isObj(m.result.channel) ? m.result.channel.id : undefined;
-  if (typeof channel !== 'string' || !isObj(p.m.params)) return;
+  if (typeof channel !== 'string' || !isObj(p.m.params) || p.seq < replay.since) return;
   // A close the host sent after this open stands — it can, since it can predict the channel's id —
   // and the open's late answer does not undo it (the house's read of 4e37a11, #22).
   if ((closedAt.get(channel) ?? -1) > p.seq) return;

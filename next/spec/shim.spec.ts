@@ -749,6 +749,42 @@ test('tg-19: an initialize answered after later requests starts the replayed pic
   }
 });
 
+test('tg-19: what was sent before an answered initialize stays out of the replay, however late its own answer comes: a grant, a channel, and an older initialize answered after it', async () => {
+  const p = await peer((c, m) => {
+    if (c.index === 0 && typeof m.id === 'number' && m.id >= 2 && m.id <= 4) return undefined;
+    return { result: {} };
+  });
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  const named = (id: number, name: string) => ({ ...initMcpl(id), params: { ...initMcpl(id).params, clientInfo: { name, version: '0' } } });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: { effectiveCapabilities: ['tools', 'channels.lifecycle'] } });
+    s.send({ jsonrpc: '2.0', id: 3, method: 'channels/open', params: { address: { session: 'k3' } } });
+    s.send(named(4, 'older'));
+    s.send(named(5, 'newer'));
+    await s.next(byId(5));
+    p.conns[0]!.ws.send(JSON.stringify({ jsonrpc: '2.0', id: 2, result: {} }));
+    p.conns[0]!.ws.send(JSON.stringify({ jsonrpc: '2.0', id: 3, result: { channel: { id: 'terminal:k3' } } }));
+    p.conns[0]!.ws.send(JSON.stringify({ jsonrpc: '2.0', id: 4, result: {} }));
+    await s.next(byId(2));
+    await s.next(byId(3));
+    await s.next(byId(4));
+    p.conns[0]!.ws.terminate();
+    await until(() => p.conns[1]?.frames.some((f) => f.method === 'initialize') ?? false, 5000, 'the shim to reconnect and replay');
+    s.send({ jsonrpc: '2.0', id: 6, method: 'ping' });
+    assert.deepEqual((await s.next(byId(6))).result, {});
+    const frames = p.conns[1]!.frames;
+    assert.deepEqual(frames.map((f) => f.method), ['initialize', 'ping'], 'the newer initialize alone, then the queue');
+    assert.equal((frames[0]!.params?.clientInfo as { name: string }).name, 'newer');
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 /** A TCP server that accepts, reads and never answers: a stalled handshake. */
 function silentServer(): Promise<{ port: number; accepted(): number; close(): void }> {
   const socks = new Set<net.Socket>();
