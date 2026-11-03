@@ -85,6 +85,45 @@ test('jr2-6/G19: sealing a journal whose disk has healed writes what only the ri
   }
 });
 
+test('jr2-6/G19: a journal sealed while the disk refuses goes on retrying, and writes what only its ring held once the disk takes writes', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dir = tmpDir();
+  try {
+    const cold = new FullDisk(dir);
+    const j = new Journal({ cold });
+    for (let i = 0; i < 3; i++) j.append(out(`before-${i}`));
+    cold.broken = true;
+    for (let i = 0; i < 5; i++) j.append(out(`only-in-ring-${i}`));
+    j.seal();
+    assert.deepEqual(seqs(onDisk(dir)), [1, 2, 3], 'the seal\'s own catch-up was refused');
+    cold.broken = false;
+    t.mock.timers.tick(60_000);
+    assert.deepEqual(seqs(onDisk(dir)), [1, 2, 3, 4, 5, 6, 7, 8], 'the backoff\'s retry wrote the ring');
+    assert.equal(j.stats().coldFailed, null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('jr2-6: a sealed journal handed on, as a new life or the registry\'s release does, retries no more', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dir = tmpDir();
+  try {
+    const cold = new FullDisk(dir);
+    const j = new Journal({ cold });
+    for (let i = 0; i < 3; i++) j.append(out(`before-${i}`));
+    cold.broken = true;
+    for (let i = 0; i < 5; i++) j.append(out(`only-in-ring-${i}`));
+    j.seal();
+    j.handOn();
+    cold.broken = false;
+    t.mock.timers.tick(60_000);
+    assert.deepEqual(seqs(onDisk(dir)), [1, 2, 3], 'nothing written once the store is another\'s');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('jr2-6/G10/G11: a journal sealed while the disk still refuses leaves a high water: the next journal numbers above it and records the hole', () => {
   const dir = tmpDir();
   try {
@@ -95,7 +134,8 @@ test('jr2-6/G10/G11: a journal sealed while the disk still refuses leaves a high
     for (let i = 0; i < 3; i++) j.append(out(`before-${i}`));
     cold.broken = true;
     for (let i = 0; i < 5; i++) j.append(out(`seen-by-subscribers-${i}`));
-    j.seal(); // one last catch-up fails too
+    j.seal(); // its catch-up fails too
+    j.handOn();
     assert.equal(Math.max(...seen), 8, 'a subscriber saw up to 8');
     assert.deepEqual(seqs(j.since(0).events), [1, 2, 3, 4, 5, 6, 7, 8], 'the sealed journal still reads them from its ring');
     // The daemon restarts (or a new life opens the same store) once the disk is back.
@@ -1315,7 +1355,7 @@ test('a sealed journal whose store heals at a retry goes back to a reservation a
       for (let i = 0; i < 5; i++) j.append(out(`kept-${i}`));
       cold.broken = true;
       for (let i = 0; i < 30; i++) j.append(out(`refused-${i}-${'r'.repeat(40)}`)); // the small ring drops most of these
-      j.seal(); // the last catch-up is refused too: the reservation stands at the last seq, failed
+      j.seal(); // the seal's catch-up is refused too: the reservation stands at the last seq, failed
       assert.equal(cold.highWater()?.reservation?.failed, true, `${sub}: sealed failing`);
       cold.broken = false;
       assert.equal(j.retryCold(), true, `${sub}: healed`);
@@ -1883,7 +1923,7 @@ test('a lowering write refused as the journal closes is said with its mark faile
     const cold = new Flaky(dir);
     const j = new Journal({ cold, sessionId: 's', log: (level, text) => said.push(`${level}: ${text}`) });
     for (let i = 0; i < 5; i++) j.append(out(`e${i}`));
-    cold.budget = 0; // the disk refuses events from here, so the close's last catch-up fails and holes stay unrecorded
+    cold.budget = 0; // the disk refuses events from here, so the close's catch-up fails and holes stay unrecorded
     j.append(out('refused'));
     cold.refuseMarks = true;
     j.close();

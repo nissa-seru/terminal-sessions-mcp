@@ -181,6 +181,7 @@ export class Journal {
   private retryMs = RETRY_MIN_MS;
   /** Retries the cold store at `retryAt` even if no event arrives meanwhile: an idle session's unwritten history must not wait for its next event (the house's read of dd8b602). */
   private retryTimer: NodeJS.Timeout | undefined;
+  private handedOn = false;
   private readonly log: JournalOptions['log'];
   private catchingUp = false;
   private dropped = 0;
@@ -501,9 +502,13 @@ export class Journal {
   /** Try the cold store again at its backoff deadline, whether or not an event arrives first (an idle session would otherwise wait for one). */
   private armRetry(): void {
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    if (this.handedOn) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      if (this.coldError !== null && !this.catchingUp && !this.sealed) this.catchUp();
+      if (this.coldError === null || this.catchingUp) return;
+      if (this.sealed) this.flushSealed();
+      else this.catchUp();
     }, timerMs(this.retryAt - clocks.monotonic()));
     this.retryTimer.unref();
   }
@@ -683,12 +688,22 @@ export class Journal {
    */
   retryCold(): boolean {
     if (!this.cold || this.coldError === null) return true;
+    if (!this.sealed) return this.catchUp();
+    this.handOn();
+    return this.flushSealed();
+  }
+
+  private flushSealed(): boolean {
     const ok = this.catchUp();
-    if (this.sealed) {
-      this.cold.close();
-      if (ok && this.persisted === this.seq) this.hot.close();
-    }
+    this.cold!.close();
+    if (ok && this.persisted === this.seq) this.hot.close();
     return ok;
+  }
+
+  handOn(): void {
+    this.handedOn = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
   }
 
   /**
@@ -939,10 +954,11 @@ export class Journal {
   /**
    * Stop appending, keep reading: a closed session's journal stays history
    * (G19). The write descriptor is released, and the hot ring too when the
-   * cold store holds everything it did. A failing cold store gets one last
-   * catch-up, whatever the backoff says; if the disk still refuses, the ring
-   * keeps the events readable here, and the high water makes the next journal
-   * over this store number above them and record the hole (jr2-6, G10, G11).
+   * cold store holds everything it did. A failing cold store gets a catch-up
+   * now, whatever the backoff says, and more on the backoff until one lands or a
+   * new life takes the store; meanwhile the ring keeps the events readable here,
+   * and the high water makes the next journal over this store number above them
+   * and record the hole (jr2-6, G10, G11).
    */
   seal(): void {
     if (this.sealed) return;
@@ -959,8 +975,8 @@ export class Journal {
       // failed mark or not: a failed one on disk is honoured on any boot, and an unmarked one on another boot, or
       // on this one while the files fall short of its block (reservationHonoured). With the mark failed here and
       // not confirmed on disk, what keepMark says of a refused failed mark holds past the close as well, and
-      // nothing retries the write now, so that is said too. At a close, holes still unrecorded mean the disk
-      // still refuses events: the last catch-up has just run, and a lost stretch leaves `lost` as its gap issues.
+      // only the ring's flush retries the write, so that is said too. At a close, holes still unrecorded mean the disk
+      // still refuses events: the seal's catch-up has just run, and a lost stretch leaves `lost` as its gap issues.
       const failed = this.holesUnrecorded();
       if (!this.writeReservation(this.seq, failed)) {
         const unmarked = failed && !this.reservedFailed ? "; and its failed mark may not be on disk, so a start on this boot can number from the files' last line, giving numbers its readers have already seen" : '';
@@ -975,6 +991,7 @@ export class Journal {
 
   close(): void {
     this.seal();
+    this.handOn();
     this.hot.close();
     this.cold?.close();
   }
