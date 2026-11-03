@@ -253,7 +253,7 @@ test('a wait replays retained output page by page to the end when a read stops s
   }
 });
 
-test("an unscoped pattern watch completes a process Run's last line at its end and drops its matchers", async () => {
+test("an unscoped pattern watch completes a process Run's last line at its end, not after the partial delay", async () => {
   const f = bare();
   try {
     const w = f.manager.add({ pattern: 'ERROR' }, A);
