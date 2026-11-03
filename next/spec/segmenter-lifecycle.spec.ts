@@ -213,7 +213,7 @@ test('a history Run whose output read throws at once renders with the output-mis
 });
 
 for (const note of [false, true]) {
-  test(`channel history folds a restart's exit into its recovery at every page size, and the page below it does not show that exit again${note ? ', with a group note between the lost Run and the recovery' : ''}`, async () => {
+  test(`channel history folds a restart's exit into its recovery at page sizes 1 and 2, and the page below each does not show that exit again${note ? ', with a group note between the lost Run and the recovery' : ''}`, async () => {
     const src = fakeSource();
     startRun(src, 'long', B, 'sleep 60');
     src.journal.append({ type: 'session.exit', code: 1 });
@@ -234,6 +234,48 @@ for (const note of [false, true]) {
     assert.deepEqual(kinds(belowTwo), note ? ['run'] : []);
   });
 }
+
+test('the page below a recovery more than a history page above it still starts with that recovery waiting, so it does not show the exit again', async () => {
+  const src = fakeSource();
+  startRun(src, 'long', B, 'sleep 60');
+  src.journal.append({ type: 'session.exit', code: 1 });
+  endRun(src, 'long', { state: 'lost', reason: 'daemon-shutdown' });
+  const first = src.journal.append({ type: 'note', text: 'recovery: process group 4242 terminated with long, which recovery ended lost', principal: SYSTEM });
+  for (let i = 0; i < 2000; i++) src.journal.append({ type: 'note', text: `recovery: note ${i}`, principal: SYSTEM });
+  src.journal.append({ type: 'recovered', class: 'history-only' });
+  const history = journalSource({ id: 's1', journal: src.journal, owner: A, run: (id) => src.journal.runs.run(id) });
+  const below = await replayNewest(history, { limit: 10, before: first.seq });
+  assert.deepEqual(below.segments.map((s) => s.kind), ['run']);
+});
+
+test('a full page reads on only while a recovery it picked waits for its exit: once the exit is folded in it stops, and an older recovery it cannot pick starts no wait', async () => {
+  for (const older of [false, true]) {
+    const src = fakeSource();
+    startRun(src, 'long', B, 'sleep 60');
+    if (!older) for (let i = 0; i < 5000; i++) src.journal.append({ type: 'output', data: `line ${i}\n`, stream: 'stdout', runId: 'long' });
+    src.journal.append({ type: 'session.exit', code: 1 });
+    endRun(src, 'long', { state: 'lost', reason: 'daemon-shutdown' });
+    if (older) for (let i = 0; i < 5000; i++) src.journal.append({ type: 'note', text: `recovery: note ${i}`, principal: SYSTEM });
+    src.journal.append({ type: 'recovered', class: 'history-only' });
+    if (older) {
+      src.journal.append({ type: 'integration', level: 'rich' });
+      startRun(src, 'next', B, 'echo next');
+      endRun(src, 'next');
+    }
+    const history = journalSource({ id: 's1', journal: src.journal, owner: A, run: (id) => src.journal.runs.run(id) });
+    const tail = src.journal.tail.bind(src.journal);
+    let read = 0;
+    src.journal.tail = ((...args: Parameters<typeof tail>) => {
+      const events = tail(...args);
+      read += events.length;
+      return events;
+    }) as typeof tail;
+    const one = await replayNewest(history, { limit: 1 });
+    assert.deepEqual([one.segments.map((s) => s.kind), one.truncated], [[older ? 'run' : 'recovered'], true]);
+    if (!older) assert.match(one.segments[0]!.head, /the shell had ended with code 1/);
+    assert.ok(read < 5000, `${read} events read, fewer than the 5,000 ${older ? "notes of the older restart" : "lines of the cut Run"}`);
+  }
+});
 
 test('a restart folding in the exit names whoever the exit cut short, the Runs it ended before the restart too, each once', async () => {
   const C = 'agent:c@t';
