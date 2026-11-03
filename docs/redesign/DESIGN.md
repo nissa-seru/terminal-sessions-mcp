@@ -197,7 +197,7 @@ Node ─┬─ Session ─┬─ Terminal (the shell's PTY · Screen · Journal)
 | **Session** | name, unique per node | A persistent environment: one shell in one terminal, with a journal, an owner, a visibility, an integration level, a backend, and a current controller. |
 | **Terminal** | the session's, in this release | A PTY with an emulator. `screen`, `input`, `resize` and control always name a terminal and default to the session's shell terminal. The model admits Run-owned terminals later (a process Run given a tty of its own); this release has exactly one terminal per session, so nothing is ambiguous. |
 | **Run** | `runId`, assigned at admission | One execution. `target: shell` writes a line into the shell terminal and occupies it until the end mark; `target: process` is spawned by the daemon with pipes, occupies nothing, and is attributed exactly. Human-typed commands detected by marks are shell Runs with `origin: human`. |
-| **Service** | the Run's `runId` | A Run with a readiness probe and a health policy. Status `starting → ready | unhealthy | exited`. |
+| **Service** | the Run's `runId` | A Run with a readiness probe and a health policy. Status `starting → ready | running | unhealthy | exited | lost`. |
 | **Attachment** | `attachmentId` | A principal observing (`observer`) or controlling (`controller`) a terminal over one connection, with two cursors: `delivered` and `read` (G22). |
 | **Watch** | `watchId` | A standing predicate over a session's journal that emits a tagged event when it fires. |
 | **Principal** | `agent:<name>@<domain>`, `human:<provider>:<id>`, `token:<name>`, `system` | Who acted. Resolved at the transport. |
