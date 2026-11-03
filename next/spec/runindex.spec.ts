@@ -2,7 +2,8 @@
  * The run index (G1, G12, G20): what it reconstructs from run lifecycle events,
  * and a Run's output read by range. `RunIndex.output(journal, runId, range)`
  * must equal `narrowOutput` applied to the whole output — the reference
- * semantics — while reading only what the range asks for (jr2-9).
+ * semantics, except that a hole outside the range doesn't make it `truncated` —
+ * while reading only what the range asks for (jr2-9).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
