@@ -53,7 +53,7 @@
  * first output. A silence wait on no Run measures from the session's newest output by the same rules: with a
  * hole after it, from a newer stamp when there is one, else from the manager's start for output from before
  * it (sessionQuiet; the house's read of bc4bc85..5d8ce0e, #22). A silence watch on no Run arms from its
- * creation.
+ * creation, and arms on nothing once its session's shell has exited.
  */
 import { randomBytes } from 'node:crypto';
 import { compileLinePattern, PARTIAL_QUIET_MS, StreamMatcher, type LineMatch } from './ansi.js';
@@ -67,7 +67,7 @@ export type WatchKind = 'pattern' | 'silence' | 'idle';
 export interface WatchSpec {
   /** Regex over output lines as they display (control sequences gone, overwrites applied; see the module comment). */
   pattern?: string;
-  /** Fire each time output stops for this many ms (re-arms on the next output). */
+  /** Fire each time output stops for this many ms (re-arms on the next output; one on no Run arms on nothing once the shell has exited). */
   silenceMs?: number;
   /** Fire each time the shell becomes available after running something. */
   idle?: boolean;
@@ -223,6 +223,7 @@ class Predicate {
   /** Start (or restart) the silence clock: fire after `ms` unless output arrives; the quiet began at `since` on the monotonic clock. */
   armSilence(ms = this.spec.silenceMs!, since = clocks.monotonic()): void {
     if (this.kind !== 'silence' || this.disposed || this.runEnded) return;
+    if (this.spec.runId === undefined && this.host.exit !== undefined) return;
     this.armed = true;
     this.quietSince = since;
     this.schedule(ms);
@@ -280,6 +281,9 @@ class Predicate {
           const quiet = this.armed ? ` no output for ${this.quietMs()}ms` : ' no output';
           this.fire({ match: `${endText(ev)};${quiet}`, seq: ev.seq });
           this.onRunEnd?.(ev);
+        } else if (ev.type === 'session.exit' && this.spec.runId === undefined && this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
+          this.silenceTimer = undefined;
         }
         return;
       case 'idle':
