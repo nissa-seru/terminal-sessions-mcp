@@ -1,7 +1,7 @@
 /**
- * G6 for history tools (ux-3): with atuin loaded by the user's rc, a session's Up and
- * Ctrl-R walk the session's own history, and what is typed at a session prompt goes to a
- * database of the session's own — never the user's. Also: atuin's bash integration brings
+ * G6 for history tools (ux-3): with atuin loaded by the user's rc, a session's Up walks
+ * the session's own history, neither Up nor Ctrl-R is atuin's, and what is typed at a
+ * session prompt goes to a database of the session's own — never the user's. Also: atuin's bash integration brings
  * bash-preexec, which calls preexec functions only for lines it finds in history; daemon
  * lines are never there, and Runs still start. Runs only where atuin is installed; every
  * shell runs with a fake HOME, so the real atuin database is never touched.
