@@ -43,14 +43,13 @@ test('m2-10: a split write is reported once, complete — never cut at the chunk
   assert.deepEqual(m.feed('more\n'), [], 'text is never matched twice');
 });
 
-test('m2-10: patterns that match the empty string are refused, unless they take a line of spaces and match it inside no line (they would fire on lines without what they look for, or never)', () => {
-  for (const p of ['x*', '(error)?', '^$', '', '\\B|READY', '^\\t*$', '\\s+|\\B']) refused(() => compileLinePattern(p), p);
+test('m2-10: patterns that match the empty string are refused, each with a reason that fits it', () => {
+  for (const p of ['x*', '(error)?', '^$', '', '^\\s*$', '\\B|READY', '\\s+|^\\B']) refused(() => compileLinePattern(p), p);
   assert.doesNotThrow(() => compileLinePattern('x+'));
-  // The reason fits the pattern: `^$` takes nothing from a single space, and the splitter never offers an empty line.
-  assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line/);
-  assert.throws(() => compileLinePattern('\\s+|\\B'), /matches the empty string inside a line, so it would match lines without what it looks for/);
-  assert.throws(() => compileLinePattern('^$'), /matches the empty string and takes nothing from a single space, and the splitter offers no empty line/);
-  assert.doesNotThrow(() => compileLinePattern('^\\s*$'), 'a line of spaces is offered, and it matches one');
+  assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line: make it require at least one character$/);
+  for (const p of ['^$', '^\\s*$', '\\B|READY']) {
+    assert.throws(() => compileLinePattern(p), /matches the empty string, and the splitter offers no empty line: make it require at least one character \(for a line of spaces, \^\\s\+\$\)$/, p);
+  }
 });
 
 test('cleanLine applies overwrites on the raw text: a U+E000 in the output is text, not a backspace', () => {

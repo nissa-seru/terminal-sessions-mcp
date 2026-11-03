@@ -197,25 +197,18 @@ export const PARTIAL_QUIET_MS = 500;
 /**
  * Compile a caller's line pattern (watch, wait_for, `ready.pattern`, `fail.pattern`):
  * on the linear-time engine (`compileUserRegex`), and refused when it matches the
- * empty string, unless its match on a space takes the space (`^\s*$`) and it
- * matches the empty string nowhere inside a short line: one that matches it
- * anywhere (`x*`, `(error)?`) would match every line, one that matches it between
- * letters (`\s+|\B`) would match lines without what it looks for, and the splitter
- * offers no empty line (`^$` could never match). Throws invalid_argument, so a bad
+ * empty string: one that matches it anywhere (`x*`, `(error)?`) would match every
+ * line, and the splitter offers no empty line, so `^$` could never match and
+ * `^\s*$` matches no line `^\s+$` doesn't. Throws invalid_argument, so a bad
  * pattern fails when the watch or service is created, never later.
  */
 export function compileLinePattern(pattern: string): RegExp {
   const re = compileUserRegex(pattern);
-  if (!re.test('')) return re;
-  const all = new RegExp(re.source, `${re.flags}g`);
-  const inside = ['xx', 'x x', ' x', 'x '].some((line) => [...line.matchAll(all)].some((m) => m[0] === ''));
-  if (re.test('x') || inside || !re.exec(' ')?.[0]) {
+  if (re.test('')) {
     const why = re.test('x')
-      ? 'the empty string, so it would match every line'
-      : inside
-        ? 'the empty string inside a line, so it would match lines without what it looks for'
-        : 'the empty string and takes nothing from a single space, and the splitter offers no empty line';
-    throw err('invalid_argument', `pattern /${pattern}/ matches ${why}: make it require at least one character`);
+      ? 'the empty string, so it would match every line: make it require at least one character'
+      : 'the empty string, and the splitter offers no empty line: make it require at least one character (for a line of spaces, ^\\s+$)';
+    throw err('invalid_argument', `pattern /${pattern}/ matches ${why}`);
   }
   return re;
 }
