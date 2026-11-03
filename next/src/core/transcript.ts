@@ -110,7 +110,8 @@
  * bounded by the kept text, not by the range, and time is linear in the
  * projected bytes. With `maxInputBytes`, the chunks are cut to the budget as
  * they are gathered (what is dropped leaves only its lasting state behind), so
- * a range far larger than the budget costs the budget; with `maxLines` alone,
+ * a range far larger than the budget costs the budget in memory, though every
+ * chunk is still scanned; with `maxLines` alone,
  * the range is gathered whole before the newline count cuts it.
  */
 import xterm from '@xterm/headless';
