@@ -1588,6 +1588,8 @@ test('a client that reads its replies and sends many past the limit in one packe
     await until(() => ended || answered() === N, 5000, 'every answer, or the end of the connection');
     assert.equal(ended, false, 'the connection stays open');
     assert.equal(answered(), N);
+    const refused = c.inbound.filter((m) => typeof m.id === 'number' && m.id >= 5000 && (m.error?.data as { executed?: boolean } | undefined)?.executed === false).length;
+    assert.ok(refused > 0, 'premise: the burst went past the limit, so some of it was refused');
     assert.ok(!h.logs.some((l) => l.msg === 'ended a connection that reads none of its replies'));
   } finally {
     await h.close();
