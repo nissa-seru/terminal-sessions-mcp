@@ -629,7 +629,7 @@ test('er-2: the tail of apt-style output reads as the terminal shows it, though 
     'Processing triggers for man-db ...',
     'DONE-APT',
   ]);
-  // Paged head first, every package's lines are there once, in order: a page deep in the output
+  // Paged head first, each Setting up line appears once, in order: a page deep in the output
   // keeps the scroll region set at its start, so the status line never mixes into a log line.
   for (const maxBytes of [4096, 16384, 65536]) {
     const { text } = await readAll(src, { since: 0, maxBytes });
