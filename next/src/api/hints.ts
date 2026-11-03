@@ -105,8 +105,8 @@ const SSH_OPT_WITH_ARG: ReadonlySet<string> = new Set([...'bBcDeEFIiJLlmOopPQRSW
 /**
  * Is the line a one-shot `ssh [options] host command` without `-t`/`-tt`? Such a remote
  * command has no terminal: a cancel here ends ssh and signals nothing to the command, and a
- * dropped connection does not hang it up, so it runs on until it writes to the closed
- * connection. Returns the host for the hint, or undefined. A hint only.
+ * dropped connection does not hang it up, so it runs on until it reads its input to the end or
+ * writes to the closed connection. Returns the host for the hint, or undefined. A hint only.
  */
 export function oneShotSshWithoutTty(line: string | undefined): string | undefined {
   if (line === undefined) return undefined;
