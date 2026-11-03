@@ -2175,6 +2175,15 @@ test("a page MAX_SCAN stops reads its last line's end from the next output past 
   assert.deepEqual(await join(3000), none, 'notes past the batch the page stopped in');
 });
 
+test('a page whose first input shows nothing is joined with what follows it, and stays within maxBytes', async () => {
+  const src = source({ cols: 80 });
+  out(src.journal, '\x1b[0m'.repeat(256) + '\tX'.repeat(2000));
+  const { text, pages } = await readAll(src, { since: 0, maxBytes: 1024 });
+  assert.notEqual(pages[0]!.text, '');
+  for (const page of pages) assert.ok(Buffer.byteLength(page.text ?? '') <= 1024, `a page of ${Buffer.byteLength(page.text ?? '')} bytes`);
+  assert.equal(text.split('X').length - 1, 2000, 'every X read once');
+});
+
 test("a page MAX_SCAN stops ends its last line before another source's output, which begins a line of its own (DESIGN §6 rule 6), and goes on into its own source's output after another source's line, and through input typed at it (the house's review of 5d8ce0e..21fed2f, PR #22, I44)", async () => {
   const join = async (build: (src: ReturnType<typeof source>) => void) => {
     const src = source();

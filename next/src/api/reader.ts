@@ -663,29 +663,33 @@ async function textPage(src: ReadSource, o: ReadOptions, maxBytes: number, geome
   // still applies to it: a page deep in apt's output keeps apt's scroll region (§6 rule 7, er-2).
   const firstOut = pieces.find((q): q is OutPiece => q.kind === 'out');
   const state = firstOut && o.since !== undefined ? stateBefore(src, o, firstOut.ev, firstOut.start) : '';
-  let budget = maxBytes;
-  let chosen = choose(pieces, budget, hold);
+  let chosen = choose(pieces, maxBytes, hold);
   const continued = (c: Chosen) => open || scanCut || c.taken < pieces.length || c.nextOffset !== undefined;
   const projectChosen = (c: Chosen) => projectPage(c, geometry, maxBytes, continued(c), state, head, firstOut);
   let p = await projectChosen(chosen);
-  for (let attempt = 1; attempt < FIT_ATTEMPTS && (p.over || p.omitted > 0) && chosen.inputBytes > 1; attempt++) {
-    // Scale by what the projected part of the input produced.
-    const projected = Math.max(1, chosen.inputBytes - p.omitted);
-    budget = Math.max(1, Math.floor(projected * Math.min(1, maxBytes / Math.max(1, p.textBytes)) * 0.9));
-    const next = choose(pieces, budget, hold);
-    if (next.inputBytes >= chosen.inputBytes) break;
-    chosen = next;
-    p = await projectChosen(chosen);
-  }
+  const fit = async (floor: number) => {
+    for (let attempt = 1; attempt < FIT_ATTEMPTS && (p.over || p.omitted > 0) && chosen.inputBytes > floor + 1; attempt++) {
+      // Scale by what the projected part of the input produced.
+      const projected = Math.max(1, chosen.inputBytes - floor - p.omitted);
+      const budget = floor + Math.max(1, Math.floor(projected * Math.min(1, maxBytes / Math.max(1, p.textBytes)) * 0.9));
+      const next = choose(pieces, budget, hold);
+      if (next.inputBytes >= chosen.inputBytes) break;
+      chosen = next;
+      p = await projectChosen(chosen);
+    }
+  };
+  await fit(0);
 
   // A page that shows nothing though it holds output (control sequences, blanks) is joined
   // with what follows it, so no page reads as empty text that stood for a line.
   const collected = pieces.reduce((a, q) => a + (q.kind === 'out' ? q.bytes : 0), 0);
   for (let grow = 0; grow < 3 && p.text === '' && chosen.inputBytes > 0 && chosen.inputBytes < collected; grow++) {
-    const next = choose(pieces, Math.min(collected, chosen.inputBytes + maxBytes), hold);
-    if (next.inputBytes <= chosen.inputBytes) break;
+    const empty = chosen.inputBytes;
+    const next = choose(pieces, Math.min(collected, empty + maxBytes), hold);
+    if (next.inputBytes <= empty) break;
     chosen = next;
     p = await projectChosen(chosen);
+    await fit(empty);
   }
 
   // Where the page ends, and whether more follows.
