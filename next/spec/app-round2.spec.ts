@@ -57,6 +57,17 @@ test('jr2-1: a principal racing another principal’s first open of a new privat
   assert.ok(!s.session.listRuns().some((r) => r.principal === B.principal), 'B ran nothing');
 });
 
+test('a busy start advises what start can do: it takes no queue', async () => {
+  assert.equal((await tool('run', { session: 'busy-start', command: 'echo ready' })).structured?.state, 'exited', 'premise: the shell is up');
+  const running = await tool('run', { session: 'busy-start', command: 'sleep 30', wait: 0 });
+  assert.ok(['starting', 'running'].includes(running.structured?.state as string), `premise: sleep holds the shell: ${running.text}`);
+  const busy = await tool('start', { session: 'busy-start', command: 'echo svc', wait: 0 });
+  assert.equal(busy.structured?.state, 'busy');
+  assert.doesNotMatch(busy.text, /queue:true/);
+  assert.match(busy.text, /start takes no queue: start again once the shell is free/);
+  await tool('cancel', { runId: running.structured?.runId as string, session: 'busy-start' });
+});
+
 test('G16: a key reused with other arguments is refused; a busy outcome is not remembered; keys are bounded', async () => {
   const k = `k-${Date.now()}`;
   const first = await tool('run', { session: 'idem1', command: 'echo one', idempotencyKey: k });
