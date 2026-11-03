@@ -469,6 +469,38 @@ test('a gone marker from the declared shell ends the Run lost: line-not-whole, n
   }
 });
 
+test('G17: Runs queued in a declared shell whose principal lost the seat before their turn end there, each of them, and none is typed', async () => {
+  const owner = 'agent:owner@test';
+  const h = await scriptedSession({ owner, attachOwner: false, control: 'seat' });
+  try {
+    const typed: string[] = [];
+    h.pty.onWrite((d) => typed.push(d));
+    h.session.attach(AGENT, 'c1', 'controller');
+    const front = h.session.admit({ target: 'shell', line: 'sleep 100', principal: AGENT });
+    assert.ok(front.admitted);
+    await until(() => h.session.run(front.run.runId).state === 'running');
+    h.session.declareShell({ principal: AGENT });
+    const one = h.session.admit({ target: 'shell', line: 'echo one', principal: AGENT });
+    const queued = ['echo two', 'echo three', 'echo four'].map((line) => h.session.admit({ target: 'shell', line, principal: AGENT, queue: true }));
+    assert.ok(one.admitted && queued.every((q) => q.admitted));
+    await until(() => typed.some((t) => t.includes("__tsm_b='echo one'")), 3000, "the first Run's line");
+    const nonce = /<<<GON''E:([0-9a-f]+)>>>/.exec(typed.find((t) => t.includes("__tsm_b='echo one'"))!)![1]!;
+    h.session.takeControl(owner); // the owner takes the seat while three Runs wait in the declared shell
+    const before = typed.length;
+    h.pty.emit(`<<<GONE:${nonce}>>>\r\n`);
+    const ids = queued.map((q) => (q.admitted ? q.run.runId : ''));
+    await until(() => ids.every((id) => h.session.run(id).state !== 'queued'), 3000, 'the queued Runs leaving the queue');
+    for (const id of ids) {
+      const r = h.session.run(id);
+      assert.equal(r.state, 'lost', id);
+      assert.match(r.reason ?? '', /^seat-lost-before-start: run requires the controller seat, held by agent:owner@test/);
+    }
+    assert.deepEqual(typed.slice(before).filter((t) => t.includes('__tsm_b')), [], 'none of their lines was typed');
+  } finally {
+    await h.session.close();
+  }
+});
+
 /** A declared shell in front, and a Run long enough to be typed in pieces, with a Run queued behind it; the first piece is typed. */
 async function piecesUnderway() {
   const h = await scriptedSession();
