@@ -270,7 +270,7 @@ test('jr2-2/tsg-1/G10/G20: a second termd on the same data dir — same port or 
   }
 });
 
-test('jr2-2: a wall-clock step back does not take the lock from a live daemon (the house\'s read of the 36 commits, #22)', async () => {
+test('jr2-2: a wall-clock step forward does not take the lock from a live daemon (the house\'s read of the 36 commits, #22)', async () => {
   const dir = dataDir();
   fs.mkdirSync(dir, { recursive: true });
   // A live holder whose command names termd: on Linux its boot id and start ticks identify it
