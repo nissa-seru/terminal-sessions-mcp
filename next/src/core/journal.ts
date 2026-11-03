@@ -181,6 +181,7 @@ export class Journal {
   private retryMs = RETRY_MIN_MS;
   /** Retries the cold store at `retryAt` even if no event arrives meanwhile: an idle session's unwritten history must not wait for its next event (the house's read of dd8b602). */
   private retryTimer: NodeJS.Timeout | undefined;
+  private handedOn = false;
   private readonly log: JournalOptions['log'];
   private catchingUp = false;
   private dropped = 0;
@@ -344,9 +345,9 @@ export class Journal {
   }
 
   append(input: EventInput): JournalEvent {
-    if (this.sealed) {
-      // A closed session's stragglers (a process Run's late exit, jr-10) must not
-      // reach the store: a new life of the name may be numbering the same file.
+    if (this.sealed || this.handedOn) {
+      // A closed or handed-on session's stragglers (a process Run's late exit, jr-10) must not
+      // reach the store: a new life of the name, or another daemon, may be numbering the same file.
       // The returned event is not part of the journal.
       this.dropped++;
       return this.stamp(input, this.seq + 1);
@@ -501,9 +502,13 @@ export class Journal {
   /** Try the cold store again at its backoff deadline, whether or not an event arrives first (an idle session would otherwise wait for one). */
   private armRetry(): void {
     if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    if (this.handedOn) return;
     this.retryTimer = setTimeout(() => {
       this.retryTimer = undefined;
-      if (this.coldError !== null && !this.catchingUp && !this.sealed) this.catchUp();
+      if (this.coldError === null || this.catchingUp) return;
+      if (this.sealed) this.flushSealed();
+      else this.catchUp();
     }, timerMs(this.retryAt - clocks.monotonic()));
     this.retryTimer.unref();
   }
@@ -522,7 +527,7 @@ export class Journal {
    * landing, and nothing else would say so. The write that lands after it is said too.
    */
   private keepMark(): void {
-    if (!this.cold?.setHighWater) return;
+    if (!this.cold?.setHighWater || this.handedOn) return;
     const failed = this.holesUnrecorded();
     const ahead = this.reserved > this.seq;
     // While failing, also when a hole the mark does not reach down to appeared (a refused gap's, below the files' last),
@@ -563,6 +568,8 @@ export class Journal {
    */
   private armMarkRetry(): void {
     if (this.markTimer) clearTimeout(this.markTimer);
+    this.markTimer = undefined;
+    if (this.handedOn) return;
     this.markTimer = setTimeout(() => {
       this.markTimer = undefined;
       if (this.sealed) return;
@@ -592,6 +599,7 @@ export class Journal {
    * never cleared while it lasts) or with this boot, and remember it once it is confirmed.
    */
   private writeReservation(to: Seq, failed: boolean): boolean {
+    if (this.handedOn) return false;
     // Clearing a failed mark says the files now record every hole it stood for. Appends are not synced, so the
     // gaps that record them are synced first: a power loss that took a stretch's gap line and kept the clear left
     // the hole unrecorded for good, since only a failed mark makes a start look for jumps in the files (the
@@ -634,6 +642,7 @@ export class Journal {
    * and a `gap` event says so.
    */
   private catchUp(): boolean {
+    if (this.handedOn) return false;
     this.catchingUp = true;
     try {
       this.noteRingDrops();
@@ -668,8 +677,8 @@ export class Journal {
         // A sealed journal issues nothing after this: its reservation goes back to exactly its last seq. Left a
         // seq ahead, for the next issue a sealed journal never makes, it read after the next reboot as a
         // torn-write gap for a seq never issued (an independent read of the fix for comment 6307349700).
-        if (this.sealed) this.writeReservation(this.seq, false);
-        else this.keepMark();
+        if (!this.sealed) this.keepMark();
+        else if (this.cold!.setHighWater) this.writeReservation(this.seq, false);
       }
       return this.coldError === null;
     } finally {
@@ -683,12 +692,25 @@ export class Journal {
    */
   retryCold(): boolean {
     if (!this.cold || this.coldError === null) return true;
-    const ok = this.catchUp();
-    if (this.sealed) {
-      this.cold.close();
-      if (ok && this.persisted === this.seq) this.hot.close();
-    }
+    if (!this.sealed) return this.catchUp();
+    const ok = this.flushSealed();
+    this.handOn();
     return ok;
+  }
+
+  private flushSealed(): boolean {
+    const ok = this.catchUp();
+    this.cold!.close();
+    if (ok && this.persisted === this.seq) this.hot.close();
+    return ok;
+  }
+
+  handOn(): void {
+    this.handedOn = true;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    if (this.markTimer) clearTimeout(this.markTimer);
+    this.markTimer = undefined;
   }
 
   /**
@@ -933,16 +955,17 @@ export class Journal {
   expire(now?: number): void {
     this.hot.expire?.(now);
     if (this.coldError !== null) this.noteRingDrops();
-    this.cold?.expire?.(now);
+    if (!this.handedOn) this.cold?.expire?.(now);
   }
 
   /**
    * Stop appending, keep reading: a closed session's journal stays history
    * (G19). The write descriptor is released, and the hot ring too when the
-   * cold store holds everything it did. A failing cold store gets one last
-   * catch-up, whatever the backoff says; if the disk still refuses, the ring
-   * keeps the events readable here, and the high water makes the next journal
-   * over this store number above them and record the hole (jr2-6, G10, G11).
+   * cold store holds everything it did. A failing cold store gets a catch-up
+   * now, whatever the backoff says, and more on the backoff until one lands or a
+   * new life takes the store; meanwhile the ring keeps the events readable here,
+   * and the high water makes the next journal over this store number above them
+   * and record the hole (jr2-6, G10, G11).
    */
   seal(): void {
     if (this.sealed) return;
@@ -951,7 +974,7 @@ export class Journal {
     if (this.markTimer) clearTimeout(this.markTimer);
     this.markTimer = undefined;
     if (this.cold && this.coldError !== null) this.catchUp();
-    if (this.cold?.setHighWater && !this.exactlyReserved()) {
+    if (this.cold?.setHighWater && !this.handedOn && !this.exactlyReserved()) {
       // Exact now: a sealed journal issues no more seqs, so the next journal over the store numbers on from
       // this one's last, and after a power loss records as lost only what the files lost. If the disk
       // refuses this too, the reservation a block ahead stands, which is safe: no seq is given twice. But the
@@ -959,8 +982,8 @@ export class Journal {
       // failed mark or not: a failed one on disk is honoured on any boot, and an unmarked one on another boot, or
       // on this one while the files fall short of its block (reservationHonoured). With the mark failed here and
       // not confirmed on disk, what keepMark says of a refused failed mark holds past the close as well, and
-      // nothing retries the write now, so that is said too. At a close, holes still unrecorded mean the disk
-      // still refuses events: the last catch-up has just run, and a lost stretch leaves `lost` as its gap issues.
+      // only the ring's flush retries the write, so that is said too. At a close, holes still unrecorded mean the disk
+      // still refuses events: the seal's catch-up has just run, and a lost stretch leaves `lost` as its gap issues.
       const failed = this.holesUnrecorded();
       if (!this.writeReservation(this.seq, failed)) {
         const unmarked = failed && !this.reservedFailed ? "; and its failed mark may not be on disk, so a start on this boot can number from the files' last line, giving numbers its readers have already seen" : '';
@@ -975,6 +998,7 @@ export class Journal {
 
   close(): void {
     this.seal();
+    this.handOn();
     this.hot.close();
     this.cold?.close();
   }
