@@ -28,7 +28,6 @@ function ownWords(line: string): string {
   const emit = (s: string) => {
     if (depth === 0) out += s;
   };
-  /** The next character starts a word: the line's start, or after an unescaped space, separator or parenthesis. */
   let wordStart = true;
   for (let i = 0; i < line.length; ) {
     const c = line[i]!;
