@@ -17,7 +17,7 @@ const matches = (pattern: string, chunks: string[]) => {
   const m = matcher(pattern);
   return chunks.flatMap((c) => m.feed(c)).map((h) => h.match);
 };
-const refused = (f: () => unknown) => assert.throws(f, (e: unknown) => e instanceof TermError && e.code === 'invalid_argument');
+const refused = (f: () => unknown, message?: string) => assert.throws(f, (e: unknown) => e instanceof TermError && e.code === 'invalid_argument', message);
 
 test('m2-10: anchors mean the line’s start and end, however the output was chunked', () => {
   // One chunk holding several lines: `^ERROR` is the second line's start.
@@ -43,13 +43,12 @@ test('m2-10: a split write is reported once, complete — never cut at the chunk
   assert.deepEqual(m.feed('more\n'), [], 'text is never matched twice');
 });
 
-test('m2-10: patterns that match the empty string are refused (they would fire on every line)', () => {
-  for (const p of ['x*', '(error)?', '^$', '']) refused(() => compileLinePattern(p));
+test('m2-10: patterns that match the empty string are refused, each with a reason that fits it', () => {
+  for (const p of ['x*', '(error)?', '^$', '', '^\\s*$', '\\B|READY', '\\s+|^\\B']) refused(() => compileLinePattern(p), p);
   assert.doesNotThrow(() => compileLinePattern('x+'));
-  // The reason fits the pattern: `^$` matches only an empty line, which the splitter never offers.
-  assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line/);
-  assert.throws(() => compileLinePattern('^$'), /matches only an empty line, which is never offered/);
-  assert.throws(() => compileLinePattern('^\\s*$'), /matches only an empty line/);
+  for (const p of ['x*', '^[a-z]*$', '^$', '^\\s*$', '\\B|READY']) {
+    assert.throws(() => compileLinePattern(p), /matches the empty string, and the splitter offers no empty line: make it require at least one character \(for a line of spaces, \^\\s\+\$\)$/, p);
+  }
 });
 
 test('cleanLine applies overwrites on the raw text: a U+E000 in the output is text, not a backspace', () => {
