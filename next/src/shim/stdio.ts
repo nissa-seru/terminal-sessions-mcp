@@ -689,7 +689,7 @@ function grantAnswered(p: Pending, m: Parsed): void {
 }
 
 function grantUnanswered(p: Pending): void {
-  if ((replay.grant?.seq ?? -1) > p.seq) return;
+  if (p.seq < replay.since || (replay.grant?.seq ?? -1) > p.seq) return;
   if (replay.refused.length >= REFUSED_MAX) {
     log(`more than ${REFUSED_MAX} refused or unanswered featureSets/update requests since the last accepted grant; this one will not be replayed after a reconnect`);
     return;
