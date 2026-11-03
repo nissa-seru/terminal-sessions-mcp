@@ -115,7 +115,7 @@ function runStatus(r: RunResult, queue = true): string {
   switch (r.state) {
     case 'exited': {
       // A hint, never evidence: the line turned on set -e in the shell it ran in, where it stays on.
-      const armed = r.target === 'shell' && looksLikeErrexit(r.line) ? ` — this turned on set -e in the shell itself, where it stays on: the next failing command ends the whole shell and the command running then ends lost; ${SET_E_NOTE}. set +e turns it off` : '';
+      const armed = r.target === 'shell' && looksLikeErrexit(r.line) ? ` — this looks like it turned on set -e in the shell itself, where it stays on: the next failing command ends the whole shell and the command running then ends lost; ${SET_E_NOTE}. set +e turns it off` : '';
       const left = r.leftovers ? ` — it left processes running in its group (a child put in the background): they run on, their output is journaled without this Run's id; cancel ${r.runId ?? 'this Run'} ends them, as does closing the session` : '';
       // A failure earlier in the pipeline (shell tools 3): the exit alone would read as success.
       // 141 is SIGPIPE: the producer ended because the next command stopped reading, which is how
