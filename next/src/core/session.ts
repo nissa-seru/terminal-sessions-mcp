@@ -285,7 +285,7 @@ const CLEAR_WHOLE_LINE = '\x05\x15';
  * the next unquoted metacharacter with its quotes removed (`<<123`, `<<EOF.txt`, `<<"E"OF` all
  * count, and `EOF` does not close `EOF.txt`), the bodies follow the line's unquoted newline in
  * order and are never scanned (a `<<` inside one is text), and an operator inside quotes, a
- * comment or arithmetic is not one. A reading the shell would refuse (an empty delimiter) counts as
+ * comment or arithmetic is not one. An empty delimiter (`<<''`, or `<<` with no word) counts as
  * open: the text then simply gets no capture line.
  */
 export function hasOpenHeredoc(text: string): boolean {
