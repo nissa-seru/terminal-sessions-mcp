@@ -2,7 +2,8 @@
  * G29 against real shells: cancel of a queued Run, of a Run the shell may not have
  * started yet (no delay after admit), of a running job, of jobs that ignore ^C and
  * ^\, of a process Run whose group outlives its leader, and of a marker-strategy Run
- * whose ^C aborts the marker echo (dash). Every cancel leaves the shell usable.
+ * whose ^C aborts the marker echo (dash). Every cancel leaves the shell usable, or
+ * says what brings it back.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
