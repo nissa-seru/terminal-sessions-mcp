@@ -386,7 +386,7 @@ export interface DiskFloor {
 
 /**
  * Free space by statfs, asked at most once a second per directory or after a megabyte written
- * since the last answer: a flood of appends costs one syscall a second. A filesystem that cannot
+ * since the last answer. A filesystem that cannot
  * be asked is not a full one: the write itself decides then. The second is measured on the
  * monotonic clock: on the wall clock a step back kept a refusal cached long after space returned,
  * an hour's step for 59 minutes (the house's read of the 33 commits, PR #22, comment 6307349700,
