@@ -1721,17 +1721,28 @@ test("atc-6: an address where 1.x's session server answers initialize in its own
   }
 });
 
-test("atc-6: a reconnect whose replayed initialize is answered outside JSON-RPC 2.0, with a structured error, stops the shim, which quotes what it said", async () => {
-  const p = await peer((c, m) =>
-    c.index > 0 && m.method === 'initialize' ? ({ jsonrpc: undefined, error: { code: -32601, message: 'Unknown method: initialize' } } as unknown as Answer) : { result: {} },
-  );
+test("atc-6: a reconnect whose replayed initialize is answered outside JSON-RPC 2.0, with a structured error, stops the shim, which quotes what it said and answers what the host asked meanwhile", async () => {
+  // After the reconnect, the replayed initialize's answer, as 1.x gives it, waits until the host has asked something.
+  let answerReplay: (() => void) | undefined;
+  const p = await peer((c, m) => {
+    if (c.index === 0) return { result: {} };
+    if (m.method === 'initialize') answerReplay = () => c.ws.send(JSON.stringify({ id: m.id, error: { code: -32601, message: 'Unknown method: initialize\nsecond line' } }));
+    return undefined;
+  });
   const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
   try {
     s.send(initMcpl(1));
     assert.equal((await s.next(byId(1))).error, undefined);
     p.conns[0]!.ws.terminate();
+    await until(() => answerReplay !== undefined, 5000, 'the replayed initialize on the new connection');
+    s.send({ jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    answerReplay!();
+    const asked = await s.next(byId(2));
+    assert.match(asked.error?.message ?? '', /it is not termd/);
     assert.equal(await exitWithin(s), 1);
-    assert.match(s.err.join(''), /answered initialize without JSON-RPC 2\.0 \(it said: -32601 Unknown method: initialize\): it is not termd/);
+    assert.equal(s.out.filter(byId(2)).length, 1, 'one answer to the request');
+    assert.match(s.err.join(''), /answered initialize without JSON-RPC 2\.0 \(it said: "-32601 Unknown method: initialize\\nsecond line"\): it is not termd/);
+    assert.ok(!s.err.join('').includes('initialize\nsecond line'), "the peer's newline is escaped");
   } finally {
     s.child.kill();
     await p.close();

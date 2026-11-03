@@ -752,10 +752,18 @@ function flushQueue(): void {
 
 function notTermd(p: Pending | undefined, m: Parsed): void {
   const what = m.error === undefined ? undefined : typeof m.error === 'string' ? m.error : isObj(m.error) ? `${String(m.error.code)} ${String(m.error.message)}` : JSON.stringify(m.error);
-  const said = what === undefined ? '' : ` (it said: ${what.slice(0, 200)})`;
+  const said = what === undefined ? '' : ` (it said: ${JSON.stringify(what.slice(0, 200))})`;
   const message = `${target} answered initialize without JSON-RPC 2.0${said}: it is not termd, and may be 1.x's session server, which this shim cannot use; point TSM_URL at 2.0's termd (port 3101 by default)`;
   log(message);
+  const sock = ws;
+  ws = null;
+  sock?.removeAllListeners('message');
+  sock?.terminate();
   if (p) failRequest(p.id, message);
+  for (const q of inflight.values()) failRequest(q.id, message);
+  inflight.clear();
+  for (const q of queue) if (q.id !== undefined) failRequest(q.id, message);
+  queue.length = 0;
   exit(1);
 }
 
