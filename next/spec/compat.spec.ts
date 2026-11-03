@@ -196,6 +196,19 @@ test('a missing Run’s advice on the compat profile names where a runId comes f
   assert.match(r.text, /^run_not_found: run r1-000000 not found: the id comes from a runCommand or launch result, and a forgotten session's Runs are gone with it$/, r.text);
 });
 
+test('launch waits for its patterns 15 s, as 1.x polled them, and 2.5 s without', async () => {
+  const waits: Array<number | undefined> = [];
+  const stub = {
+    sessionSummary: () => undefined,
+    start: async (_c: Caller, o: { wait?: number }) => {
+      waits.push(o.wait);
+      throw new Error('stop here');
+    },
+  } as unknown as App;
+  for (const args of [{ readyPatterns: ['up'] }, { errorPatterns: ['FATAL'] }, {}]) await callTool('launch', { name: 'w', command: 'serve', ...args }, { app: stub, caller: A, resultText: 'json' }, compat);
+  assert.deepEqual(waits, [15_000, 15_000, 2_500]);
+});
+
 test('launch with cwd into an existing fish session groups the command as fish does, with begin and end', async () => {
   const typed: string[] = [];
   const stub = (flavor: 'fish' | 'posix') =>
