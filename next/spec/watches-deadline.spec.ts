@@ -920,19 +920,19 @@ test('a pattern hit says where its line began, as a search match does, and the e
   }
 });
 
-test('a session silence watch stands down at the shell\'s exit, and its quiet is timed again from the next output', async () => {
+test('a session silence watch stands down at the shell\'s exit for the rest of that life: output the life\'s processes print after the exit times nothing, nor does a watch added after it', async () => {
   const f = bare();
   try {
     f.out('x\n');
-    const sw = f.manager.add({ silenceMs: 400, once: true }, A);
+    const sw = f.manager.add({ silenceMs: 300, once: true }, A);
+    (f.host as { exit?: { exitCode: number | null } }).exit = { exitCode: 0 };
     f.journal.append({ type: 'session.exit', code: 0 });
-    await sleep(600);
-    assert.equal(f.firings(sw.watchId).length, 0, 'no firing about the ended shell');
-    assert.ok(f.manager.list().some((w) => w.watchId === sw.watchId), 'the once-only watch is kept for the next life');
-    const t0 = performance.now();
-    f.out('$ ');
-    await until(() => f.firings(sw.watchId).length === 1, 3000);
-    assert.ok(performance.now() - t0 >= 380, `timed from the next output: ${(performance.now() - t0).toFixed(0)} ms`);
+    f.out('cleaning up\n', 'p1', 'stdout');
+    const late = f.manager.add({ silenceMs: 300, once: true }, A);
+    await sleep(700);
+    assert.deepEqual([f.firings(sw.watchId).length, f.firings(late.watchId).length], [0, 0], 'no firing about the ended shell');
+    const kept = f.manager.list().map((w) => w.watchId);
+    assert.ok(kept.includes(sw.watchId) && kept.includes(late.watchId), 'both once-only watches are kept for the next life');
   } finally {
     f.close();
   }

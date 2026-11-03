@@ -223,6 +223,7 @@ class Predicate {
   /** Start (or restart) the silence clock: fire after `ms` unless output arrives; the quiet began at `since` on the monotonic clock. */
   armSilence(ms = this.spec.silenceMs!, since = clocks.monotonic()): void {
     if (this.kind !== 'silence' || this.disposed || this.runEnded) return;
+    if (this.spec.runId === undefined && this.host.exit !== undefined) return;
     this.armed = true;
     this.quietSince = since;
     this.schedule(ms);
