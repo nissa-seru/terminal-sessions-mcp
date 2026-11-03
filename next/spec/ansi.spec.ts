@@ -46,8 +46,7 @@ test('m2-10: a split write is reported once, complete — never cut at the chunk
 test('m2-10: patterns that match the empty string are refused, each with a reason that fits it', () => {
   for (const p of ['x*', '(error)?', '^$', '', '^\\s*$', '\\B|READY', '\\s+|^\\B']) refused(() => compileLinePattern(p), p);
   assert.doesNotThrow(() => compileLinePattern('x+'));
-  assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line: make it require at least one character$/);
-  for (const p of ['^$', '^\\s*$', '\\B|READY']) {
+  for (const p of ['x*', '^[a-z]*$', '^$', '^\\s*$', '\\B|READY']) {
     assert.throws(() => compileLinePattern(p), /matches the empty string, and the splitter offers no empty line: make it require at least one character \(for a line of spaces, \^\\s\+\$\)$/, p);
   }
 });
