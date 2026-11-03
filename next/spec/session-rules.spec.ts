@@ -11,7 +11,7 @@ import { createRequire, syncBuiltinESMExports } from 'node:module';
 import type { ScriptedProcess } from '../src/backends/scripted.js';
 import { configuredEnv, redactSnapshot } from '../src/core/env.js';
 import { CLEAR_LINE_KEYS } from '../src/core/marks.js';
-import { AGENT, code, HUMAN, OSC, ofType, scriptedSession as harness, tick } from './fake-shell.js';
+import { AGENT, code, HUMAN, OSC, ofType, scriptedSession as harness, tick, until } from './fake-shell.js';
 
 
 test('G3/G4 (core-1, tg-3, api-8): a prompt that follows our line without a pre-execution mark ends the Run lost; the session is not wedged', async () => {
@@ -196,6 +196,46 @@ test('G29 (api-10): cancel is allowed to the seat holder, the Run\'s own princip
   assert.ok(b.admitted);
   const cb = await h.session.cancel(b.run.runId, 'agent:owner@test', { graceMs: 10 });
   assert.equal(cb.state, 'cancelled', 'the owner may cancel');
+  await h.session.close();
+});
+
+test('G17: a queued Run whose principal lost the seat before the shell came back ends there, never typed', async () => {
+  const owner = 'agent:owner@test';
+  const h = await harness({ owner, attachOwner: false, control: 'seat' });
+  h.session.attach(AGENT, 'c1', 'controller');
+  const a = h.session.admit({ target: 'shell', line: 'sleep 10', principal: AGENT });
+  assert.ok(a.admitted);
+  await until(() => h.session.run(a.run.runId).state === 'running', 2000, 'the first Run running');
+  const q = h.session.admit({ target: 'shell', line: 'echo queued', principal: AGENT, queue: true });
+  assert.ok(q.admitted);
+  assert.equal(h.session.run(q.run.runId).state, 'queued');
+  h.session.takeControl(owner); // the owner takes the seat over while the Run waits
+  const typedFrom = h.pty.writes.length;
+  h.shell.finishHung(0);
+  await until(() => h.session.run(q.run.runId).state !== 'queued', 2000, 'the queued Run leaving the queue');
+  const r = h.session.run(q.run.runId);
+  assert.equal(r.state, 'lost');
+  assert.match(r.reason ?? '', /^seat-lost-before-start: run requires the controller seat, held by agent:owner@test/);
+  assert.deepEqual(h.pty.writes.slice(typedFrom).filter((w) => w.includes('tsm-cmd-')), [], 'its line was never typed');
+  await h.session.close();
+});
+
+test('G17: a queued Run whose principal left and whose seat lapsed is typed into the free terminal, and takes no seat on the way', async () => {
+  const h = await harness({ owner: 'agent:owner@test', attachOwner: false, control: 'seat', seatGraceMs: 50 });
+  const att = h.session.attach(AGENT, 'c1', 'controller');
+  const a = h.session.admit({ target: 'shell', line: 'sleep 10', principal: AGENT });
+  assert.ok(a.admitted);
+  await until(() => h.session.run(a.run.runId).state === 'running', 2000, 'the first Run running');
+  const q = h.session.admit({ target: 'shell', line: 'echo queued', principal: AGENT, queue: true });
+  assert.ok(q.admitted);
+  h.session.detach(att.attachmentId); // a dropped connection: the seat is kept through the grace, then goes free
+  await until(() => h.session.currentController === null, 2000, 'the seat free once the grace ran out');
+  h.shell.finishHung(0);
+  const r = await h.session.awaitRun(q.run.runId, 2000);
+  assert.equal(r.state, 'exited', 'typed as at admission: nobody holds the seat it would be typed against');
+  assert.equal(h.session.currentController, null, 'the queued Run took no seat for a principal who is gone');
+  h.session.attach(HUMAN, 'c2', 'controller');
+  assert.equal(h.session.currentController, HUMAN, 'a person present can take the free seat');
   await h.session.close();
 });
 

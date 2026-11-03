@@ -204,6 +204,7 @@ interface RunRecord extends RunInfo {
   replaced?: boolean;
   /** Output of the process group after the Run's end was noted once (ss-10). */
   lingerNoted?: boolean;
+  queuedAs?: { internal: boolean; asOwner: boolean };
 }
 
 /** How much of a Run's newest output a transcript reads and projects. */
@@ -238,7 +239,7 @@ const REPLIES_KEPT = 8;
 /** What a note says when the reinit gate after `exec bash` gives up: the recovery that loads the integration with the session's key. */
 const REINIT_RECOVERY = 'Shell commands are unavailable until it loads: once the shell shows its own prompt, send ` . "$TSM_BASH_RC" reinit typed` with input to load it, or open a new session';
 const publicRun = (r: RunRecord): RunInfo => {
-  const { waiters: _w, changeWaiters: _cw, process: _p, markerNonce: _n, inlineLines: _il, inlineAck: _ia, inlineLinesSubmitted: _ils, tempFile: _t, execLine: _x, cancelRequested: _c, markerTail: _m, markerStarted: _ms, startShellPid: _ssp, probed: _pr, endReason: _e, writeOrder: _wo, survivePrompts: _sp, replaced: _rp, lingerNoted: _ln, admittedMono: _am, startedMono: _sm, ...info } = r;
+  const { waiters: _w, changeWaiters: _cw, process: _p, markerNonce: _n, inlineLines: _il, inlineAck: _ia, inlineLinesSubmitted: _ils, tempFile: _t, execLine: _x, cancelRequested: _c, markerTail: _m, markerStarted: _ms, startShellPid: _ssp, probed: _pr, endReason: _e, writeOrder: _wo, survivePrompts: _sp, replaced: _rp, lingerNoted: _ln, queuedAs: _qa, admittedMono: _am, startedMono: _sm, ...info } = r;
   return { ...info, seq: { ...info.seq } };
 };
 
@@ -2004,8 +2005,23 @@ export class Session {
     }
     const run = this.newRun({ target: 'shell', principal: opts.principal, origin, line: opts.line, idem: opts.idem, queued: !avail.ok });
     if (avail.ok) this.launchShellRun(run);
-    else this.queue.push(run);
+    else {
+      run.queuedAs = { internal: opts.internal === true, asOwner: opts.asOwner === true };
+      this.queue.push(run);
+    }
     return { admitted: true, run: publicRun(run) };
+  }
+
+  private seatStillHeld(run: RunRecord): boolean {
+    if (run.queuedAs?.internal || run.principal === SYSTEM || this.control === 'open') return true;
+    if (this.controller === null || this.controller === run.principal) return true;
+    try {
+      this.requireSeat(run.principal, 'run', { asOwner: run.queuedAs?.asOwner === true });
+      return true;
+    } catch (e) {
+      this.endRun(run, { state: 'lost', reason: `seat-lost-before-start: ${(e as Error).message}` });
+      return false;
+    }
   }
 
   private drainQueue(): void {
@@ -2014,7 +2030,7 @@ export class Session {
     // read of 236301b.)
     while (this.queue.length && this.shellAvailable().ok) {
       const next = this.queue.shift()!;
-      if (isTerminal(next.state)) continue;
+      if (isTerminal(next.state) || !this.seatStillHeld(next)) continue;
       try {
         this.launchShellRun(next);
       } catch (e) {
@@ -2103,6 +2119,7 @@ export class Session {
     if (running || this.editingBlocks()) {
       if (!opts.queue) return { admitted: false, busy: running ? publicRun(occupying!) : null, reason: running ? 'running' : this.editingReason() };
       const run = this.newRun({ ...init, queued: true });
+      run.queuedAs = { internal: opts.internal === true, asOwner: opts.asOwner === true };
       this.declaredQueue.push(run);
       // A hold with no event to end it (a submitted line) is looked at again from the drain.
       queueMicrotask(() => this.drainDeclared(within));
@@ -2274,6 +2291,7 @@ export class Session {
     const i = this.declaredQueue.findIndex((r) => (r.within ?? null) === within && !isTerminal(r.state));
     if (i === -1) return;
     const next = this.declaredQueue.splice(i, 1)[0]!;
+    if (!this.seatStillHeld(next)) return this.drainDeclared(within);
     const present = within === null ? this.shellState === 'unavailable' : this.runs.get(within)?.state === 'running';
     if (!present) {
       this.endRun(next, { state: 'lost', reason: 'enclosing-run-ended (before start)' });
