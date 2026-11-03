@@ -248,6 +248,29 @@ test('the page below a recovery more than a history page above it still starts w
   assert.deepEqual(below.segments.map((s) => s.kind), ['run']);
 });
 
+test('the look above `before` for a waiting recovery gives the event loop a turn between history pages', async () => {
+  const src = fakeSource();
+  startRun(src, 'long', B, 'sleep 60');
+  src.journal.append({ type: 'session.exit', code: 1 });
+  endRun(src, 'long', { state: 'lost', reason: 'daemon-shutdown' });
+  const first = src.journal.append({ type: 'note', text: 'recovery: process group 4242 terminated with long, which recovery ended lost', principal: SYSTEM });
+  for (let i = 0; i < 4000; i++) src.journal.append({ type: 'note', text: `recovery: note ${i}`, principal: SYSTEM });
+  src.journal.append({ type: 'recovered', class: 'history-only' });
+  const history = journalSource({ id: 's1', journal: src.journal, owner: A, run: (id) => src.journal.runs.run(id) });
+  const order: string[] = [];
+  const pages = src.journal.pages.bind(src.journal);
+  src.journal.pages = function* (cursor: number, size?: number) {
+    for (const page of pages(cursor, size)) {
+      if (cursor === first.seq - 1) order.push('page');
+      yield page;
+    }
+  } as typeof pages;
+  setImmediate(() => order.push('turn'));
+  const below = await replayNewest(history, { limit: 10, before: first.seq });
+  assert.deepEqual(below.segments.map((s) => s.kind), ['run']);
+  assert.ok(order.indexOf('turn') > 0 && order.indexOf('turn') < order.lastIndexOf('page'), order.join(','));
+});
+
 test('a full page reads on only while a recovery it picked waits for its exit: once the exit is folded in it stops, and an older recovery it cannot pick starts no wait', async () => {
   for (const older of [false, true]) {
     const src = fakeSource();

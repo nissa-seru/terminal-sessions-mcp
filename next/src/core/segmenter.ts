@@ -754,7 +754,7 @@ export async function replayNewest(src: ReplaySource, opts: { limit: number; bef
   let truncated = false;
   // Scanning backwards, a recovery waits for the exit that may precede it; only Run ends and what the restart
   // records lie between.
-  let recovery: Picked | undefined = opts.before !== undefined ? recoveryFrom(src, opts.before) : undefined;
+  let recovery: Picked | undefined = opts.before !== undefined ? await recoveryFrom(src, opts.before) : undefined;
   const oldest = src.journal.oldestSeq ?? 1;
   outer: while (limit > 0 && to >= oldest && budget > 0) {
     const page = src.journal.tail(Math.min(HISTORY_PAGE, budget), to);
@@ -793,7 +793,7 @@ export async function replayNewest(src: ReplaySource, opts: { limit: number; bef
   return { segments: await renderPicked(src, picked.reverse()), truncated };
 }
 
-function recoveryFrom(src: ReplaySource, before: Seq): Picked | undefined {
+async function recoveryFrom(src: ReplaySource, before: Seq): Promise<Picked | undefined> {
   let budget = HISTORY_MAX_EVENTS;
   for (const page of src.journal.pages(before - 1, HISTORY_PAGE)) {
     for (const ev of page.events) {
@@ -802,6 +802,7 @@ function recoveryFrom(src: ReplaySource, before: Seq): Picked | undefined {
     }
     budget -= page.events.length;
     if (budget <= 0) return undefined;
+    await yieldTurn();
   }
   return undefined;
 }
