@@ -1482,6 +1482,7 @@ export class Session {
   private async doClose(opts: { graceful?: boolean; timeoutMs?: number; reason?: string }): Promise<void> {
     this.closeBegun = true;
     if (opts.reason !== undefined) this.closeReason = opts.reason;
+    for (const r of [...this.queue.splice(0), ...this.declaredQueue.splice(0)]) this.endRun(r, { state: 'lost', reason: this.closeReason ?? 'session-closed' });
     if (this.shellState !== 'exited') {
       const exited = new Promise<void>((resolve) => {
         const off = this.pty.onExit(() => {
@@ -2028,7 +2029,7 @@ export class Session {
     // (Not held by `declaredEnded`: this queue holds Runs admitted for the session's own shell,
     // before any declaration, which the fail-closed refusal has nothing to protect — the house's
     // read of 236301b.)
-    while (this.queue.length && this.shellAvailable().ok) {
+    while (this.queue.length && !this.closeBegun && this.shellAvailable().ok) {
       const next = this.queue.shift()!;
       if (isTerminal(next.state) || !this.seatStillHeld(next)) continue;
       try {
@@ -2274,7 +2275,7 @@ export class Session {
   }
 
   private drainDeclared(within: string | null): void {
-    if (this.declaredEnded || this.closed) return;
+    if (this.declaredEnded || this.closeBegun) return;
     if (this.editingBlocks()) {
       // A submitted line's hold has no event to end it: a Run waiting behind it looks again shortly.
       if (!this.declaredRecheck && this.declaredQueue.some((r) => (r.within ?? null) === within && !isTerminal(r.state))) {

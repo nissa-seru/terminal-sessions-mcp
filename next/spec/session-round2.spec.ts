@@ -1123,6 +1123,30 @@ test('ss-6: close sends SIGTERM, then SIGKILL, to a foreground job that survived
   assert.ok(ofType(h.journal.since(0).events, 'note').some((e) => e.text.includes(`process group ${job}`) && /SIGTERM, then SIGKILL/.test(e.text)));
 });
 
+test('a close drops a queued Run without typing it, though the hangup brings the shell back to its prompt before it exits', async () => {
+  const h = await harness();
+  const a = await h.session.admitWhenAvailable({ target: 'shell', line: 'sleep 30', principal: AGENT });
+  assert.ok(a.admitted);
+  await until(() => h.shell.busy && h.session.run(a.run.runId).state === 'running', 2000, 'the Run running');
+  const q = h.session.admit({ target: 'shell', line: 'echo queued', principal: AGENT, queue: true });
+  assert.ok(q.admitted);
+  assert.equal(h.session.run(q.run.runId).state, 'queued');
+  let typedFrom = -1;
+  const hangup = h.pty.kill.bind(h.pty);
+  h.pty.kill = (sig) => {
+    if (sig === 'SIGHUP' && typedFrom === -1) {
+      typedFrom = h.pty.writes.length;
+      h.shell.finishHung(129); // the job ends on the hangup, and the shell draws its prompt before it exits
+    }
+    hangup(sig);
+  };
+  await h.session.close();
+  assert.ok(typedFrom !== -1, 'the close hung the shell up');
+  assert.deepEqual(h.pty.writes.slice(typedFrom).filter((w) => w.includes('tsm-cmd-')), [], 'nothing was typed once the close began');
+  const r = h.session.run(q.run.runId);
+  assert.deepEqual([r.state, r.reason], ['lost', 'session-closed']);
+});
+
 test('a Run the close cut short is lost, though the shell reports its job’s end before it exits, and a Run that finished first keeps its own end', async () => {
   // bash, hung up with its job, can print the end mark with 129 before it exits itself. Read first, that
   // mark made the Run exited 129, and its completion read as a command that failed (CI on #22: mcpl-6 at
