@@ -12,6 +12,7 @@ import { Journal } from '../src/core/journal.js';
 import { lineBytes, MemoryStore } from '../src/core/stores.js';
 import { project } from '../src/core/transcript.js';
 import { endRun, out, readAll, source, startRun } from './reader-fixture.spec.js';
+import { gate, until } from './testhost.js';
 
 const numbered = (n: number, eol = '\n', from = 1) => Array.from({ length: n }, (_, i) => `L${String(i + from).padStart(6, '0')} some text here${eol}`).join('');
 
@@ -890,8 +891,17 @@ test('G11 / er-1 / er-8 / er-12 through the App and a real shell: pages by since
     // Two concurrent process Runs: every line whole, labelled by Run. The verdict means something only
     // when their output did interleave in the journal, so that is checked too.
     const start = (await app.read(A, { session: 'pg', tail: 1 })).nextCursor;
-    const a = app.run(A, { session: 'pg', target: 'process', command: "for n in 1 2 3; do printf 'A%s-start ' $n; sleep 0.15; printf 'A%s-end\\n' $n; done", wait: 10_000 });
-    const b = app.run(A, { session: 'pg', target: 'process', command: "for n in 1 2 3; do printf 'B%s-start ' $n; sleep 0.15; printf 'B%s-end\\n' $n; done", wait: 10_000 });
+    const pg = registry.live('pg');
+    const seen = (text: string) => until(() => pg.journal.since(start).events.some((e) => e.type === 'output' && e.stream !== 'pty' && e.data.includes(text)), 5000, text);
+    const gates = { A: [gate(), gate(), gate()], B: [gate(), gate(), gate()] };
+    const producer = (who: 'A' | 'B') => gates[who].map((g, i) => `printf '${who}${i + 1}-start '; ${g.wait}; printf '${who}${i + 1}-end\\n'`).join('; ');
+    const a = app.run(A, { session: 'pg', target: 'process', command: producer('A'), wait: 10_000 });
+    const b = app.run(A, { session: 'pg', target: 'process', command: producer('B'), wait: 10_000 });
+    for (let i = 0; i < 3; i++) {
+      await Promise.all([seen(`A${i + 1}-start`), seen(`B${i + 1}-start`)]);
+      gates.A[i]!.open();
+      gates.B[i]!.open();
+    }
     await Promise.all([a, b]);
     const order: string[] = [];
     for (const e of (await app.read(A, { session: 'pg', since: start, as: 'events', limit: 2000, maxBytes: 1024 * 1024 })).events!) {
