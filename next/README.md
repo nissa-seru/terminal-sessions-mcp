@@ -85,8 +85,8 @@ Every successful result has two renderings: a readable transcript closed by one 
 envelope (`structuredContent`) whose `state` is the only authority on whether a command
 finished. A failed call comes back as an error result whose text opens with the code
 (`session_not_found: …`) and which carries no envelope. The exit is the shell's own; for a pipeline (the last one of a multi-line command) the
-result also carries each command's status (`pipeStatus`, not in a declared shell, whose end marker
-carries `$?` alone), and the status line says when one before
+result also carries each command's status (`pipeStatus`, from a shell with its integration, not from
+one without it or a declared shell, whose end markers carry `$?` alone), and then the status line says when one before
 the last failed, since `make | tee log` exits as `tee` did; a producer that `head` stopped reading
 (status 141, SIGPIPE) is not called a failure. The text block is the transcript when the connection asks for it
 (`TSM_RESULT_TEXT=transcript` for the shim, `?resultText=transcript` on the URL; the
