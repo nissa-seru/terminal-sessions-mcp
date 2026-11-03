@@ -827,17 +827,19 @@ test('2f357bd: ^C interrupts the foreground job; Close asks twice; the activity 
   }
 });
 
-/** The App's session-acting calls, as `method:session`, in the order they reach it. */
-function spyOnApp(): { calls: string[]; restore: () => void } {
+/** The App's session-acting calls, as `method:session`, in the order they reach it, and each one's connection. */
+function spyOnApp(): { calls: string[]; connections: string[]; restore: () => void } {
   const app = (server as unknown as { opts: { app: App } }).opts.app as unknown as Record<string, (...args: unknown[]) => unknown>;
   const calls: string[] = [];
+  const connections: string[] = [];
   const names = ['signal', 'control', 'resize', 'sessionClose', 'sessionList'];
   const own = names.map((n) => [n, app[n]!] as const);
   for (const [n, f] of own) app[n] = (...args: unknown[]) => {
     calls.push(`${n}:${(args[1] as { session?: string } | undefined)?.session ?? ''}`);
+    connections.push((args[0] as { connectionId: string }).connectionId);
     return f.apply(app, args);
   };
-  return { calls, restore: () => { for (const [n] of own) delete app[n]; } };
+  return { calls, connections, restore: () => { for (const [n] of own) delete app[n]; } };
 }
 
 /** Holds the server's answer to each terminal/attach while `held` is set; `reached` resolves when one is held. */
@@ -869,7 +871,7 @@ function holdAttach(): { hold: () => Promise<void>; release: () => void; restore
   };
 }
 
-test('while another session attaches, ^C, the seat button, Close, a resize and typed input act on neither session, and each says so (tsg-7)', async (t) => {
+test('while another session attaches, ^C, the seat button, Close and typed input act on neither session and each says so, and a resize waits for the attach (tsg-7)', async (t) => {
   if (skip || !browser) return t.skip(skip || 'no browser');
   const a = await agent();
   await a.call('session_open', { session: 'hx', visibility: 'shared' });
@@ -884,6 +886,8 @@ test('while another session attaches, ^C, the seat button, Close, a resize and t
     await pick(page, 'hx');
     await page.waitForFunction(`${rows}.includes('HX-READY')`, { timeout: 10_000 });
     await takeSeat(page, a, 'hx');
+    // The page's own connection: the last control call on hx is its Take seat.
+    const pageConnection = spy.connections[spy.calls.lastIndexOf('control:hx')]!;
     // The GUI holds hx's seat, so each of these would act on hy, the session being attached.
     let reached = attach.hold();
     await pick(page, 'hy');
@@ -901,8 +905,8 @@ test('while another session attaches, ^C, the seat button, Close, a resize and t
     const listed = spy.calls.length;
     attach.release();
     await page.waitForFunction(`${rows}.includes('HY-READY')`, { timeout: 10_000 });
-    // The session list the GUI asks for once attached comes after every click on its connection.
-    await until(() => spy.calls.slice(listed).some((c) => c.startsWith('sessionList:')), 10_000, 'the session list after the attach');
+    // The session list this page asks for once attached comes after every click on its connection.
+    await until(() => spy.calls.some((c, i) => i >= listed && c.startsWith('sessionList:') && spy.connections[i] === pageConnection), 10_000, 'the session list after the attach');
     assert.deepEqual(spy.calls.filter((c) => /^(signal|control|resize|sessionClose):hy$/.test(c)), [], 'nothing reached hy');
     assert.equal(registry.get('hy')?.kind, 'live');
     // Back to hx, typed at while hy (where the GUI observes) is still shown: the attach is what the notice names.
