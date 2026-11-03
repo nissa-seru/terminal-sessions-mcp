@@ -180,6 +180,21 @@ test('defect 4: takeScreenshot with outputPath does not claim a file it never wr
   assert.equal(typeof shot.structured?.cols, 'number');
 });
 
+test('launch with cwd into an existing fish session groups the command as fish does, with begin and end', async () => {
+  const typed: string[] = [];
+  const stub = (flavor: 'fish' | 'posix') =>
+    ({
+      sessionSummary: () => ({ id: 'f', state: 'idle' }),
+      runFlavor: () => flavor,
+      start: async (_c: Caller, o: { command: string }) => {
+        typed.push(o.command);
+        throw new Error('stop here');
+      },
+    }) as unknown as App;
+  for (const flavor of ['fish', 'posix'] as const) await callTool('launch', { name: 'f', command: 'serve &', cwd: '/srv' }, { app: stub(flavor), caller: A, resultText: 'json' }, compat);
+  assert.deepEqual(typed, ["cd -- '/srv' && begin\nserve &\nend", "cd -- '/srv' && {\nserve &\n}"]);
+});
+
 test('searchLogs says a search its time or size budget stopped left later output unsearched, not that more matches exist', async () => {
   const note = async (stoppedBy: 'time' | 'size' | 'limit') => {
     const stub = { search: async () => ({ session: 's', matches: [], scanned: [1, 9], more: true, stoppedBy, nextCursor: 9, bounded: false }), runPlumbing: () => [] } as unknown as App;
