@@ -260,8 +260,8 @@ const publicRun = (r: RunRecord): RunInfo => {
  * the prompt when the first line arrives (a person's half-typed command in a shared
  * terminal) would otherwise swallow the assignment while the markers after it still ran,
  * and the Run would report `exited 0` for a command that never ran (an outside review
- * reproduced it). The first line is preceded by ^U, which clears what precedes the cursor
- * (the whole line at its end); the check is what stands when that is not enough.
+ * reproduced it). Each line is preceded by CLEAR_WHOLE_LINE, ^E ^U, which clears the line
+ * wherever its cursor is; the check is what stands when that is not enough.
  */
 const INLINE_SAFE = new Set([...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ,._/:=@+-'].map((c) => c.charCodeAt(0)));
 const INLINE_LINE_BYTES = 900;
