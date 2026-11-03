@@ -591,12 +591,20 @@ test('TSM_NODE_BIN: the node it names, by an absolute path or one from $HOME, is
   const bin = path.join(tmp, 'named-node', 'bin');
   fs.mkdirSync(bin, { recursive: true });
   fs.symlinkSync(process.execPath, path.join(bin, 'node'));
-  for (const [named, where] of [[path.join(bin, 'node'), path.join(bin, 'node')], ['tools/bin/node', path.join(home, 'tools', 'bin', 'node')]] as const) {
-    const r = await launch(LAUNCHER, ['--port', '0'], { HOME: home, TSM_NODE_BIN: named });
+  // A shell's exported CDPATH naming a directory that also holds tools/bin changes neither where the path resolves nor what cd prints.
+  const cdpath = path.join(tmp, 'named-node-cdpath');
+  fs.mkdirSync(path.join(cdpath, 'tools', 'bin'), { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(cdpath, 'tools', 'bin', 'node'));
+  for (const [named, where, CDPATH] of [
+    [path.join(bin, 'node'), path.join(bin, 'node'), undefined],
+    ['tools/bin/node', path.join(home, 'tools', 'bin', 'node'), undefined],
+    ['tools/bin/node', path.join(home, 'tools', 'bin', 'node'), cdpath],
+  ] as const) {
+    const r = await launch(LAUNCHER, ['--port', '0'], { HOME: home, TSM_NODE_BIN: named, CDPATH });
     assert.equal(r.code, 0, r.stderr);
     const PATH = r.started!.env.PATH!;
     const found = execFileSync('/bin/sh', ['-c', 'command -v node || true'], { env: { PATH }, encoding: 'utf8' }).trim();
-    assert.equal(found, where, `TSM_NODE_BIN=${named}: a Run inherits PATH ${PATH}`);
+    assert.equal(found, where, `TSM_NODE_BIN=${named}${CDPATH ? ` with CDPATH=${CDPATH}` : ''}: a Run inherits PATH ${PATH}`);
   }
 });
 

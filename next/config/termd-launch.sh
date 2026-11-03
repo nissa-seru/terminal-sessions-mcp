@@ -100,7 +100,7 @@ prepend /opt/homebrew/bin
 prepend "$HOME/.local/bin"
 if nvm=$(nvm_bin); then prepend "$nvm"; fi
 prepend "$HOME/.volta/bin"
-case ${TSM_NODE_BIN:-} in */*) if d=$(cd "$(dirname "$TSM_NODE_BIN")" 2>/dev/null && pwd); then prepend "$d"; fi ;; esac
+case ${TSM_NODE_BIN:-} in */*) if d=$(CDPATH= cd -- "$(dirname "$TSM_NODE_BIN")" 2>/dev/null && pwd); then prepend "$d"; fi ;; esac
 export PATH
 
 daemon=${TSM_DAEMON:-"$here/../dist/src/daemon.js"}
