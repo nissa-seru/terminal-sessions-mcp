@@ -584,18 +584,20 @@ test("TSM_NODE is termd's MCPL node name, not the launcher's: it passes through 
   assert.doesNotMatch(none.stderr, /TSM_NODE=/, 'the advice never names the identity variable');
 });
 
-test('TSM_NODE_BIN: the node it names is the `node` a process Run finds', async () => {
+test('TSM_NODE_BIN: the node it names, by an absolute path or one from $HOME, is the `node` a process Run finds', async () => {
   const home = path.join(tmp, 'named-node-home');
-  fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(path.join(home, 'tools', 'bin'), { recursive: true });
+  fs.symlinkSync(process.execPath, path.join(home, 'tools', 'bin', 'node'));
   const bin = path.join(tmp, 'named-node', 'bin');
   fs.mkdirSync(bin, { recursive: true });
-  const named = path.join(bin, 'node');
-  fs.symlinkSync(process.execPath, named);
-  const r = await launch(LAUNCHER, ['--port', '0'], { HOME: home, TSM_NODE_BIN: named });
-  assert.equal(r.code, 0, r.stderr);
-  const PATH = r.started!.env.PATH!;
-  const found = execFileSync('/bin/sh', ['-c', 'command -v node || true'], { env: { PATH }, encoding: 'utf8' }).trim();
-  assert.equal(found, named, `a Run inherits PATH ${PATH}`);
+  fs.symlinkSync(process.execPath, path.join(bin, 'node'));
+  for (const [named, where] of [[path.join(bin, 'node'), path.join(bin, 'node')], ['tools/bin/node', path.join(home, 'tools', 'bin', 'node')]] as const) {
+    const r = await launch(LAUNCHER, ['--port', '0'], { HOME: home, TSM_NODE_BIN: named });
+    assert.equal(r.code, 0, r.stderr);
+    const PATH = r.started!.env.PATH!;
+    const found = execFileSync('/bin/sh', ['-c', 'command -v node || true'], { env: { PATH }, encoding: 'utf8' }).trim();
+    assert.equal(found, where, `TSM_NODE_BIN=${named}: a Run inherits PATH ${PATH}`);
+  }
 });
 
 test('the launcher works by a relative path: its own directory is resolved before it changes to $HOME', async () => {
