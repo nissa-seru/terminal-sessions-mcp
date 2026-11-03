@@ -748,6 +748,7 @@ test('cursors written while their directory cannot be synced are logged once, no
   const file = path.join(r.dir, 'sessions', 'cur', 'cursors.json');
   const readOf = () => (JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { read: number }>)[A]!.read;
   const said = () => warnings.filter((w) => /cursors are written but their directory could not be synced/.test(w)).length;
+  const retake = () => (reg as unknown as { ensureLock(): void }).ensureLock();
   // The writes are counted while the directory fsync fails throughout: counted by warnings, with the EIO
   // lasting one dispose each, the test passed with a flush that rescheduled itself after every unsynced
   // write (the house's read of the 33 commits, PR #22, comment 6307350477, item 8).
@@ -758,11 +759,16 @@ test('cursors written while their directory cannot be synced are logged once, no
       reg.dispose();
       assert.equal([readOf(), writes()].join(), '5,1', 'the file holds the cursors: they were written once');
       assert.equal(said(), 1, 'the sync failure is logged');
-      // Nothing changed: an unsynced write left nothing to write again, at a flush or a timer's.
+      // Nothing changed: an unsynced write left nothing to write again, at a flush or a timer's. The
+      // registry takes its lock again before each dispose, as a new life does, since a book writes only
+      // while the registry holds the data dir.
+      retake();
       reg.dispose();
+      retake();
       reg.dispose();
       assert.equal(writes(), 1, 'nothing is rewritten while the directory still cannot be synced');
       h.markRead(A, 6);
+      retake();
       reg.dispose();
       assert.equal([readOf(), writes()].join(), '6,2', 'a later change is still written, once');
       assert.equal(said(), 1, 'and the failure is said once');
@@ -813,6 +819,32 @@ test('G22: a cursor write refused as the registry is disposed is not tried again
       assert.equal([tries, writes()].join(), '1,0', 'no write after the data dir was given up');
     },
     () => (tries++, refusing),
+  );
+  await cleanup(r);
+});
+
+test('G22: a dirty book left by a refused write after the data dir was given up is written once the registry holds it again, and never before', async () => {
+  const r = rig();
+  const s = (await r.reg.ensure({ id: 'again2', owner: A })).session;
+  await run(s, A, 'echo one');
+  await r.reg.close('again2');
+  const h = hist(r.reg.get('again2'));
+  const file = path.join(r.dir, 'sessions', 'again2', 'cursors.json');
+  let refusing = true;
+  await renamesInto(
+    'cursors.json',
+    async (writes) => {
+      h.markRead(A, 7);
+      r.reg.dispose();
+      refusing = false;
+      r.reg.dispose();
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      assert.equal(writes(), 0, 'nothing written while the registry does not hold the data dir, a second dispose included');
+      await r.reg.ensure({ id: 'other', owner: A });
+      const readOf = () => (JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { read?: number } | undefined>)[A]?.read;
+      await until(() => readOf() === 7, 3000, 'the waiting cursor written once the lock is held again');
+    },
+    () => refusing,
   );
   await cleanup(r);
 });
