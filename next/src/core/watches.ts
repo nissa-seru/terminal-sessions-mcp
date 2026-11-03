@@ -53,7 +53,7 @@
  * first output. A silence wait on no Run measures from the session's newest output by the same rules: with a
  * hole after it, from a newer stamp when there is one, else from the manager's start for output from before
  * it (sessionQuiet; the house's read of bc4bc85..5d8ce0e, #22). A silence watch on no Run arms from its
- * creation.
+ * creation, and arms on nothing once its session's shell has exited.
  */
 import { randomBytes } from 'node:crypto';
 import { compileLinePattern, PARTIAL_QUIET_MS, StreamMatcher, type LineMatch } from './ansi.js';
@@ -67,7 +67,7 @@ export type WatchKind = 'pattern' | 'silence' | 'idle';
 export interface WatchSpec {
   /** Regex over output lines as they display (control sequences gone, overwrites applied; see the module comment). */
   pattern?: string;
-  /** Fire each time output stops for this many ms (re-arms on the next output). */
+  /** Fire each time output stops for this many ms (re-arms on the next output; one on no Run arms on nothing once the shell has exited). */
   silenceMs?: number;
   /** Fire each time the shell becomes available after running something. */
   idle?: boolean;
