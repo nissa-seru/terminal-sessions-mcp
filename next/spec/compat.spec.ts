@@ -180,6 +180,20 @@ test('defect 4: takeScreenshot with outputPath does not claim a file it never wr
   assert.equal(typeof shot.structured?.cols, 'number');
 });
 
+test('searchLogs says a search its time or size budget stopped left later output unsearched, not that more matches exist', async () => {
+  const note = async (stoppedBy: 'time' | 'size' | 'limit') => {
+    const stub = { search: async () => ({ session: 's', matches: [], scanned: [1, 9], more: true, stoppedBy, nextCursor: 9, bounded: false }), runPlumbing: () => [] } as unknown as App;
+    const out = JSON.parse((await callTool('searchLogs', { session: 's', pattern: 'x' }, { app: stub, caller: A, resultText: 'json' }, compat)).text) as Array<{ note?: string }>;
+    return out.find((o) => o.note !== undefined)?.note ?? '';
+  };
+  for (const budget of ['time', 'size'] as const) {
+    const n = await note(budget);
+    assert.doesNotMatch(n, /more matches exist/, budget);
+    assert.match(n, new RegExp(`stopped at its ${budget} budget before the end of the log: later output was not searched`), budget);
+  }
+  assert.match(await note('limit'), /more matches exist \(stopped by limit\)/);
+});
+
 test('listSessions has 1.x’s fields; killSession and killAll forget sessions, so a kill-until-empty loop ends', async () => {
   await call('runCommand', { session: 'ls-1', command: 'echo one' });
   await call('runCommand', { session: 'ls-2', command: 'echo two' });
