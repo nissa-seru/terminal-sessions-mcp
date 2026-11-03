@@ -76,10 +76,15 @@ function ownWords(line: string): string {
  * Does the line, at a command position of the shell that runs it, turn on errexit (`set -e`,
  * `set -euo pipefail`, `set -o errexit`)? In a session shell that stays on: the next failing
  * command ends the whole shell, and the Run in it ends `lost`. Inside a loop or an `if` branch
- * it still is the shell's own `set`; inside quotes, a subshell or a heredoc it is not. A hint only.
+ * it still is the shell's own `set`; inside quotes, a subshell or a heredoc it is not. The last
+ * such `set` on the line decides: a later `set +e` or `set +o errexit` turns it off. A hint only.
  */
-const ERREXIT = /(?:^|[;&|\n{]\s*|\b(?:then|do|else)\s+)set\s+(?:-[A-Za-df-z]*e[A-Za-z]*\b|-o\s+errexit\b)/;
-export const looksLikeErrexit = (line: string | undefined): boolean => line !== undefined && ERREXIT.test(ownWords(line));
+const ERREXIT_SET = /(?:^|[;&|\n{]\s*|\b(?:then|do|else)\s+)set\s+(?:([-+])[A-Za-df-z]*e[A-Za-z]*\b|([-+])o\s+errexit\b)/g;
+export const looksLikeErrexit = (line: string | undefined): boolean => {
+  let on = false;
+  if (line !== undefined) for (const m of ownWords(line).matchAll(ERREXIT_SET)) on = (m[1] ?? m[2]) === '-';
+  return on;
+};
 
 /** ssh's single-letter options that take a value (ssh(1)). */
 const SSH_OPT_WITH_ARG: ReadonlySet<string> = new Set([...'bBcDeEFIiJLlmOopPQRSWw']);

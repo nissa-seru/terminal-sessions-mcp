@@ -15,9 +15,9 @@ const base = (over: Partial<RunResult>): RunResult => ({
 });
 const text = (r: RunResult) => renderRun(r, 'transcript').text;
 
-test('set -e at a command position is recognized; set +e, set -x and set -e inside quotes are not', () => {
-  for (const line of ['set -e', 'set -eu', 'set -euo pipefail', 'set -Eeuo pipefail', 'set -o errexit', 'cd /w && set -e', 'echo a; set -e\nmake', 'if true; then set -e; fi']) assert.ok(looksLikeErrexit(line), line);
-  for (const line of ['set +e', 'set -x', 'set -u', 'set -o pipefail', 'grep "set -e" build.sh', 'echo set -e', 'bash -e build.sh', 'setenv -e']) assert.ok(!looksLikeErrexit(line), line);
+test('set -e at a command position is recognized, and the last such set on the line decides; set +e, set -x and set -e inside quotes are not', () => {
+  for (const line of ['set -e', 'set -eu', 'set -euo pipefail', 'set -Eeuo pipefail', 'set -o errexit', 'cd /w && set -e', 'echo a; set -e\nmake', 'if true; then set -e; fi', 'set +e; set -e', 'set -e; set +e; set -o errexit']) assert.ok(looksLikeErrexit(line), line);
+  for (const line of ['set +e', 'set -x', 'set -u', 'set -o pipefail', 'grep "set -e" build.sh', 'echo set -e', 'bash -e build.sh', 'setenv -e', 'set -e; set +e', 'set -euo pipefail; make; set +o errexit', 'set -e && make; set +eu']) assert.ok(!looksLikeErrexit(line), line);
 });
 
 test('a one-shot ssh without -t is recognized with its host; a shell-opening ssh, ssh -t/-tt and non-ssh lines are not', () => {
