@@ -114,6 +114,23 @@ test('defect 1: a command meant for a nested shell is not queued behind it; decl
   assert.match(String(outer.output), /mark=\[\]/);
 });
 
+test('a launch whose log preview fails after the service was admitted still answers with its runId, never "Failed to start"', async () => {
+  const read = app.read.bind(app);
+  app.read = (async (caller, o) => {
+    if (o.tail !== undefined) throw new Error('journal read refused');
+    return read(caller, o);
+  }) as typeof app.read;
+  try {
+    const r = await call('launch', { name: 'svc-preview', command: 'echo up; sleep 30' });
+    assert.equal(r.status, 'running', JSON.stringify(r));
+    assert.equal(typeof r.runId, 'string', 'the admitted Run is named, so a retry need not start it again');
+    assert.deepEqual(r.logs, ['[the output could not be read: journal read refused]']);
+  } finally {
+    app.read = read;
+  }
+  await call('killSession', { session: 'svc-preview', graceful: false });
+});
+
 test('defect 3: a launch with error patterns alone watches 15 s for them and answers error; launch into an existing session keeps its command in the cwd', async () => {
   const began = Date.now();
   const failed = await call('launch', { name: 'svc-fail', command: 'sleep 1; echo FATAL-42; sleep 30', errorPatterns: ['FATAL-42'] });
