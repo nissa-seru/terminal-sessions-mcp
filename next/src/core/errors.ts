@@ -1,4 +1,4 @@
-/** Typed errors with stable codes. They reach hosts as JSON-RPC errors (§15). */
+/** Typed errors with stable codes. They reach hosts as JSON-RPC errors, or as a tool result's error text (§15). */
 export type ErrorCode =
   | 'session_not_found'
   | 'session_exists'
