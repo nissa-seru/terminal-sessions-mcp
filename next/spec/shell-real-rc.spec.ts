@@ -4,9 +4,11 @@
  * real HOME, so whatever the rc brings — prompt themes, history tools, fzf, a
  * terminal's shell integration — meets the integration for real.
  *
- * Side effects are contained: the session keeps its own HISTFILE (under its temp
- * dir), atuin runs on a default config and a temp database, and nothing in the
- * rc files is written. When the daemon was started from Ghostty, Ghostty's own
+ * The session's history is contained: it keeps its own HISTFILE (under its temp
+ * dir), atuin keeps its database and key in the session's directory with sync off,
+ * and nothing in the rc files is written. Whatever else the rc writes under HOME
+ * or the XDG directories (a completion dump, a plugin's cache) reaches the
+ * developer's own files. When the daemon was started from Ghostty, Ghostty's own
  * integration is loaded on purpose (through the session's env, which the scrub of
  * the daemon's env does not touch) to prove keyed marks withstand it.
  */
