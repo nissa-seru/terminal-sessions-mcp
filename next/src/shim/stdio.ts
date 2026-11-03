@@ -635,8 +635,13 @@ function noteNotification(m: Parsed, seq: number): void {
 function answered(p: Pending, m: Parsed): void {
   if (p.method === 'featureSets/update') return grantAnswered(p, m);
   if (m.error !== undefined) return; // the host saw the refusal; its picture is as before
-  if (p.method === 'initialize') replay.initialize = p.m;
-  else if (p.method === 'channels/open') opened(p, m);
+  if (p.method === 'initialize') {
+    replay.initialize = p.m;
+    delete replay.grant;
+    replay.refused = [];
+    replay.reduced.clear();
+    replay.channels.clear();
+  } else if (p.method === 'channels/open') opened(p, m);
   else if (p.method === 'channels/close' && isObj(p.m.params) && typeof p.m.params.channelId === 'string') closed(p.m.params.channelId, p.seq);
 }
 

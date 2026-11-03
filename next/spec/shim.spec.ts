@@ -629,6 +629,31 @@ test("tg-19: after a drop, the request in flight is failed and not resent, the r
   }
 });
 
+test('tg-19: an initialize the daemon answered starts the replayed picture over: a reconnect after it replays no grant or channel from before it', async () => {
+  const p = await peer((_c, m) => (m.method === 'channels/open' ? { result: { channel: { id: 'terminal:k1' } } } : { result: {} }));
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: { effectiveCapabilities: ['tools', 'channels.lifecycle'] } });
+    await s.next(byId(2));
+    s.send({ jsonrpc: '2.0', id: 3, method: 'channels/open', params: { address: { session: 'k1' } } });
+    await s.next(byId(3));
+    s.send(initMcpl(4)); // the daemon's lane starts over at an initialize, its grant and channels with it
+    await s.next(byId(4));
+    p.conns[0]!.ws.terminate();
+    await until(() => p.conns[1]?.frames.some((f) => f.method === 'initialize') ?? false, 5000, 'the shim to reconnect and replay');
+    s.send({ jsonrpc: '2.0', id: 5, method: 'ping' });
+    assert.deepEqual((await s.next(byId(5))).result, {});
+    assert.deepEqual(p.conns[1]!.frames.map((f) => f.method), ['initialize', 'ping'], 'the second initialize alone, then the queue');
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 /** A TCP server that accepts, reads and never answers: a stalled handshake. */
 function silentServer(): Promise<{ port: number; accepted(): number; close(): void }> {
   const socks = new Set<net.Socket>();
