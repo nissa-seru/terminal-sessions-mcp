@@ -6,8 +6,9 @@
 #
 # It puts the usual toolchain directories on PATH — process Runs inherit the daemon's
 # environment (G7), so `npm test` must resolve there too — finds node on it (or
-# TSM_NODE_BIN=/path/to/node), runs this package's daemon (or TSM_DAEMON=/path/to/daemon.js),
-# starts in $HOME (sessions opened without a cwd start there as well), and on macOS logs to
+# TSM_NODE_BIN=/path/to/node, whose directory goes ahead of those unless PATH has it
+# already), runs this package's daemon (or TSM_DAEMON=/path/to/daemon.js), starts in
+# $HOME (sessions opened without a cwd start there as well), and on macOS logs to
 # ~/Library/Logs/termd/termd.log (0600, rotated by termd) unless --log-file is given. Under
 # systemd the log stays on stderr, for the journal. The umask is left as the supervisor set
 # it: termd creates its own files owner-only by mode, and the sessions' shells and process
@@ -18,7 +19,7 @@ set -eu
 : "${HOME:?HOME is not set}"
 # Resolved before leaving the caller's directory, so a relative path to this script works as
 # an absolute one does (the house's read of 59f660b, #22).
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 cd "$HOME"
 
 # A session costs about five open files (pty, journal, key file). A supervisor that didn't
@@ -99,6 +100,7 @@ prepend /opt/homebrew/bin
 prepend "$HOME/.local/bin"
 if nvm=$(nvm_bin); then prepend "$nvm"; fi
 prepend "$HOME/.volta/bin"
+case ${TSM_NODE_BIN:-} in */*) if d=$(CDPATH= cd -P -- "$(dirname "$TSM_NODE_BIN")" 2>/dev/null && pwd -P); then prepend "$d"; fi ;; esac
 export PATH
 
 daemon=${TSM_DAEMON:-"$here/../dist/src/daemon.js"}
