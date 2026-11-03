@@ -581,8 +581,8 @@ export const COMPAT_TOOLS: ToolDef[] = [
             ? `cd -- '${a.cwd.replace(/[\\']/g, '\\$&')}' && begin\n${a.command as string}\nend`
             : `cd -- ${shellQuote(a.cwd)} && {\n${a.command as string}\n}`
           : (a.command as string);
-      // Without patterns 1.x waited 2 s and said `running`: wait just past the 2 s liveness window (atc-7).
-      const o: Parameters<App['start']>[1] = { session: name, command, name, wait: ready || fail ? 30_000 : 2_500 };
+      // 1.x polled its patterns 15 s, and without them waited 2 s, then said `running`: wait just past the 2 s liveness window (atc-7).
+      const o: Parameters<App['start']>[1] = { session: name, command, name, wait: ready || fail ? 15_000 : 2_500 };
       if (a.cwd !== undefined && !exists) o.cwd = a.cwd as string;
       if (ready) o.ready = { pattern: ready };
       if (fail) o.fail = { pattern: fail };
