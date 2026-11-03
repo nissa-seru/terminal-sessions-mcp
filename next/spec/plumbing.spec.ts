@@ -109,7 +109,7 @@ test('a declared shell’s Run: its output begins after the start marker’s lin
   const old = `<<<START:${N}:1000>>>\r\nA\r\n<<<PROBE:${N}:2000>>>\r\nB\r\n<<<PROBE:${N}:1000>>>\r\n`;
   assert.equal(cutPlumbing(old, inline), 'A\r\nB\r\n');
   assert.equal(cutPlumbing(old), 'A\r\nB\r\n', 'by shape too: the start marker is in the output');
-  // The marker strategy's probe names no pid: always the session's own shell.
+  // A marker probe from before pids names none: the session's own shell.
   assert.equal(cutPlumbing(`${typed(N)}A\n echo "<<<PRO""BE:${N}>>>"\n<<<PROBE:${N}>>>\n$ `, { strategy: 'marker', nonce: N }), 'A\n');
 });
 
