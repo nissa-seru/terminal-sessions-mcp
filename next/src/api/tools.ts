@@ -604,7 +604,7 @@ export const TOOLS: ToolDef[] = [
       "command's full output the same way. `tail: N` gives the last N lines (also of one Run with `runId`; with `as: events`, the last N events, at most 2,000); for what came before, pass its " +
       '`lines.before.until` as `until`, and its `lines.before.untilOffset`, when given, as `untilOffset`, with the same tail. Every result carries `nextCursor`; ' +
       'when a page ends inside a large output event it also carries `nextOffset` — pass both back (`since`, `offset`). ' +
-      'Use `screen` for what the terminal shows right now; use `search` to find a pattern in history.',
+      'Use `screen` for what the terminal shows right now; use `search`, where the connection has it (the terminal.search feature set, or the full profile on plain MCP), to find a pattern in history.',
     inputSchema: {
       type: 'object',
       properties: {
