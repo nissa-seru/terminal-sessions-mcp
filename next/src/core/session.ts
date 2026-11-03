@@ -2018,9 +2018,8 @@ export class Session {
 
   private seatStillHeld(run: RunRecord): boolean {
     if (run.queuedAs?.internal || run.principal === SYSTEM || this.control === 'open') return true;
-    if (this.controller === null || this.controller === run.principal) return true;
     try {
-      this.requireSeat(run.principal, 'run', { asOwner: run.queuedAs?.asOwner === true });
+      this.recheckSeat(run.principal, 'run', { asOwner: run.queuedAs?.asOwner === true });
       return true;
     } catch (e) {
       this.endRun(run, { state: 'lost', reason: `seat-lost-before-start: ${(e as Error).message}` });
@@ -2278,33 +2277,36 @@ export class Session {
   }
 
   private drainDeclared(within: string | null): void {
-    if (this.declaredEnded || this.closeBegun) return;
-    if (this.editingBlocks()) {
-      // A submitted line's hold has no event to end it: a Run waiting behind it looks again shortly.
-      if (!this.declaredRecheck && this.declaredQueue.some((r) => (r.within ?? null) === within && !isTerminal(r.state))) {
-        this.declaredRecheck = setTimeout(() => {
-          this.declaredRecheck = undefined;
-          this.drainDeclared(within);
-          this.notifyAvailable();
-        }, DECLARED_RECHECK_MS);
-        this.declaredRecheck.unref();
+    for (;;) {
+      if (this.declaredEnded || this.closeBegun) return;
+      if (this.editingBlocks()) {
+        // A submitted line's hold has no event to end it: a Run waiting behind it looks again shortly.
+        if (!this.declaredRecheck && this.declaredQueue.some((r) => (r.within ?? null) === within && !isTerminal(r.state))) {
+          this.declaredRecheck = setTimeout(() => {
+            this.declaredRecheck = undefined;
+            this.drainDeclared(within);
+            this.notifyAvailable();
+          }, DECLARED_RECHECK_MS);
+          this.declaredRecheck.unref();
+        }
+        return;
+      }
+      if (this.inFront.has(within)) return;
+      const i = this.declaredQueue.findIndex((r) => (r.within ?? null) === within && !isTerminal(r.state));
+      if (i === -1) return;
+      const next = this.declaredQueue.splice(i, 1)[0]!;
+      if (!this.seatStillHeld(next)) continue;
+      const present = within === null ? this.shellState === 'unavailable' : this.runs.get(within)?.state === 'running';
+      if (!present) {
+        this.endRun(next, { state: 'lost', reason: 'enclosing-run-ended (before start)' });
+        continue;
+      }
+      try {
+        this.launchInline(next);
+      } catch (e) {
+        this.endRun(next, { state: 'lost', reason: `launch-failed: ${errMessage(e)}` });
       }
       return;
-    }
-    if (this.inFront.has(within)) return;
-    const i = this.declaredQueue.findIndex((r) => (r.within ?? null) === within && !isTerminal(r.state));
-    if (i === -1) return;
-    const next = this.declaredQueue.splice(i, 1)[0]!;
-    if (!this.seatStillHeld(next)) return this.drainDeclared(within);
-    const present = within === null ? this.shellState === 'unavailable' : this.runs.get(within)?.state === 'running';
-    if (!present) {
-      this.endRun(next, { state: 'lost', reason: 'enclosing-run-ended (before start)' });
-      return this.drainDeclared(within);
-    }
-    try {
-      this.launchInline(next);
-    } catch (e) {
-      this.endRun(next, { state: 'lost', reason: `launch-failed: ${errMessage(e)}` });
     }
   }
 
@@ -3228,7 +3230,7 @@ export class Session {
       // The file already has owner-only mode. POSIX/zsh use >| to override noclobber; fish parses >| as a pipe.
       writeExclusive(out, '');
       const admitted = await this.admitWhenAvailable(() => {
-        if (principal !== SYSTEM && this.control !== 'open') this.requireSeat(principal, 'run', opts);
+        if (principal !== SYSTEM && this.control !== 'open') this.recheckSeat(principal, 'run', opts);
         // waitAvailable can change the declared shell: choose syntax just before each attempt to admit.
         const front = this.layers.at(-1);
         const flavor = front ? declaredFlavor(front.shell) : this.flavor;
@@ -3380,10 +3382,19 @@ export class Session {
       this.setController(principal, principal, 'override');
       return;
     }
+    throw this.seatRefusal(verb, owner);
+  }
+
+  private recheckSeat(principal: Principal, verb: string, opts: SeatOptions = {}): void {
+    if (this.controller === null || this.controller === principal) return;
+    throw this.seatRefusal(verb, principal === this.owner || opts.asOwner === true);
+  }
+
+  private seatRefusal(verb: string, owner: boolean): Error {
     const next = owner
       ? `as the owner you can take it over (control take), or ask ${this.controller} to release it`
       : `ask ${this.controller} to release it (control release), or wait until it is free`;
-    throw err('not_controller', `${verb} requires the controller seat, held by ${this.controller}${this.reservedNote()}: ${next}`, {
+    return err('not_controller', `${verb} requires the controller seat, held by ${this.controller}${this.reservedNote()}: ${next}`, {
       controller: this.controller,
       verb,
     });
