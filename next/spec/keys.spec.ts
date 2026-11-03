@@ -7,7 +7,8 @@ test('G8: every 1.6 key name still decodes to the same bytes in normal cursor mo
   const legacy: Record<string, string> = {
     Enter: '\r', Tab: '\t', 'Shift-Tab': '\x1b[Z', Esc: '\x1b', Escape: '\x1b', Space: ' ', Backspace: '\x7f',
     Delete: '\x1b[3~', Up: '\x1b[A', Down: '\x1b[B', Right: '\x1b[C', Left: '\x1b[D', Home: '\x1b[H', End: '\x1b[F',
-    PageUp: '\x1b[5~', PageDown: '\x1b[6~', F1: '\x1bOP', F4: '\x1bOS', F5: '\x1b[15~', F12: '\x1b[24~',
+    PageUp: '\x1b[5~', PageDown: '\x1b[6~', F1: '\x1bOP', F2: '\x1bOQ', F3: '\x1bOR', F4: '\x1bOS', F5: '\x1b[15~',
+    F6: '\x1b[17~', F7: '\x1b[18~', F8: '\x1b[19~', F9: '\x1b[20~', F10: '\x1b[21~', F11: '\x1b[23~', F12: '\x1b[24~',
     'C-c': '\x03', 'C-a': '\x01', 'C-z': '\x1a', 'C-D': '\x04', 'M-x': '\x1bx', 'M-X': '\x1bX', 'M-.': '\x1b.',
   };
   for (const [name, bytes] of Object.entries(legacy)) assert.equal(decodeKey(name), bytes, name);
