@@ -124,7 +124,7 @@ replaces conventions with a model and guarantees:
 One principle runs through the tool surface: **primitives, not workflows.** The server
 exposes orthogonal operations with parseable results and leaves composition — loops,
 fan-out, conditional waits — to whatever the host already has for that: connectome's
-`code_execution`, which injects every tool as an async function into a Python interpreter;
+`code_execution`, which hands a JavaScript script every tool as an async call;
 a Bash-shaped harness's shell, through this server's CLI; a plain MCP host's own tool
 loop. The current codebase's unexposed test-scenario runner and wait-for-pattern loop are
 the kind of thing that does not come back. Codex's formulation of the same line: the host
@@ -951,8 +951,9 @@ The same server serves three kinds of host. Nothing in the core changes between 
 what changes is which affordances carry the weight.
 
 **connectome (agent-framework).** The full lane: channels, the gate, presence. Agents
-compose primitives with `code_execution` — every tool is an async Python function
-returning the tool's text, parsed with `json.loads`, fanned out with `asyncio.gather` —
+compose primitives with `code_execution` — every tool is an async JavaScript call
+answering `{ content, structuredContent, isError }`, the envelope in `structuredContent`,
+fanned out with `Promise.all` —
 and a background script with `wake_agent` is an alternative to a daemon watch for
 conditions the agent wants to express in code. Daemon watches stay for cost (no
 interpreter) and for hosts without scripts; health probes stay in the daemon because
@@ -1011,10 +1012,11 @@ server does regardless and what is better fixed upstream. **Proposed bridge chan
 message through as block attributes, not only the chat-shaped `origin` fields; a
 `wake: "suggested"` option that accepts a server's declared `suggestedTreatment` as that
 server's policy, which is RFC-001 §5.2's explicit acceptance and removes the need for
-per-server presets; collapse held lines that a later `supersedes`. **Proposed host
-change** (agent-framework): `code_execution` hands a script `structuredContent` when a
-tool result carries it, so scripts parse the structure while the model reads the
-transcript; the same `suggestedTreatment` acceptance could sit in recipe gate config.
+per-server presets; collapse held lines that a later `supersedes`. **Host change**
+(agent-framework), landed: `code_execution` hands a script `structuredContent` when a
+tool result carries it, so scripts read the structure while the model reads the
+transcript (see `UPSTREAM-CHANGES.md`). **Proposed host change**: the same
+`suggestedTreatment` acceptance could sit in recipe gate config.
 
 **Plain MCP (Cursor, Claude Desktop, Claude Code without the bridge) via the stdio shim.**
 No lane. `run` / `await` / `read` carry the workflow, `--profile core` keeps the surface
@@ -1066,11 +1068,12 @@ it declares one (`run`, `await`, `start`, `read`, `screen`, `cancel`, `session_l
 envelope without a published schema. Stable fields a script can rely on: `runId`, `state`,
 `exit`, `durationMs`, `nextCursor`, `truncated`, `output`, in camelCase like the rest of the
 MCPL wire. A failed call is an `isError` result that carries no envelope (G27). A script must never have to parse prose to tell `exited` from `running`; the
-envelope's `state` is the only authority on completion (G27). Until a host's script runner
-prefers `structuredContent` — agent-framework's `code_execution` hands scripts the text
-today, see `UPSTREAM-CHANGES.md` — a per-connection `resultText: transcript | json` setting
-defaults to `json`, which is what the current tool emits, and hosts opt into `transcript`
-in their server entry.
+envelope's `state` is the only authority on completion (G27). A per-connection
+`resultText: transcript | json` setting defaults to `json`, which is what the current tool
+emits, for a host whose scripts parse a tool's text; a host whose scripts read
+`structuredContent` opts into `transcript` in its server entry, as the shipped
+agent-framework recipe does, since its `code_execution` hands scripts `structuredContent`
+(see `UPSTREAM-CHANGES.md`).
 
 **Tiers.** The default surface is ten single-purpose tools — `run`, `await`, `read`,
 `screen`, `input`, `cancel`, `session_list`, `session_open`, `session_close` and

@@ -91,7 +91,8 @@ the last failed, since `make | tee log` exits as `tee` did; a producer that `hea
 (status 141, SIGPIPE) is not called a failure. The text block is the transcript when the connection asks for it
 (`TSM_RESULT_TEXT=transcript` for the shim, `?resultText=transcript` on the URL; the
 shipped configs set it) and the envelope as JSON otherwise — the default, for hosts whose
-scripts parse tool text (agent-framework's code execution). The hints below — that a line
+scripts parse a tool's text (agent-framework's code execution hands its scripts
+`structuredContent` instead). The hints below — that a line
 looks like it opened another shell, turned on `set -e`, or ran `ssh` without a terminal — are
 part of the status line, so a host reading the JSON gets the facts (`line`, `state`, `reason`)
 and no hint field.
