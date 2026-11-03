@@ -40,7 +40,7 @@ test('the status line hints: set -e armed, a one-shot ssh running or cancelled, 
   assert.match(text(running), /ssh -t in the shell lets terminal interrupts reach it.*ssh -tt as a process Run hangs it up/);
   assert.match(text(running), /can only confirm that ssh ended/);
   assert.doesNotMatch(text(base({ ...running, line: 'ssh -t build01 make -j8' })), /local ssh client/);
-  assert.match(text(base({ state: 'cancelled', line: 'ssh build01 make -j8', durationMs: 31000 })), /ended the local ssh client only; the command on build01 had no terminal there.*may still be running/);
+  assert.match(text(base({ state: 'cancelled', line: 'ssh build01 make -j8', durationMs: 31000 })), /ended the local ssh client only; the command on build01 had no terminal there \(no -t\), so it got no signal and may still be running/);
   assert.doesNotMatch(text(base({ state: 'cancelled', line: 'make -j8', durationMs: 31000 })), /still be running/);
   const lost = text(base({ state: 'lost', reason: 'shell-exited (status 2)', line: 'npm test' }));
   assert.match(lost, /outcome unknown: shell-exited \(status 2\) — the shell running this command exited under it.*set -e is on in the shell and a command fails/);

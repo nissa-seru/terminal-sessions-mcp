@@ -130,7 +130,7 @@ function runStatus(r: RunResult, queue = true): string {
     }
     case 'cancelled': {
       const host = oneShotSshWithoutTty(r.line);
-      const remote = host !== undefined ? ` — this ended the local ssh client only; the command on ${host} had no terminal there (no -t), so nothing reached it and it may still be running; ssh -t in the shell lets terminal interrupts reach it, while ending ssh -tt as a process Run hangs it up; a termd on that host would own the remote work` : '';
+      const remote = host !== undefined ? ` — this ended the local ssh client only; the command on ${host} had no terminal there (no -t), so it got no signal and may still be running; ssh -t in the shell lets terminal interrupts reach it, while ending ssh -tt as a process Run hangs it up; a termd on that host would own the remote work` : '';
       return `cancelled${r.signal ? ` by ${r.signal}` : r.exit !== undefined ? ` (exit ${r.exit})` : ''} after ${fmt(r.durationMs ?? 0)}${remote}`;
     }
     case 'lost': {
