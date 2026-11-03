@@ -951,8 +951,9 @@ The same server serves three kinds of host. Nothing in the core changes between 
 what changes is which affordances carry the weight.
 
 **connectome (agent-framework).** The full lane: channels, the gate, presence. Agents
-compose primitives with `code_execution` — every tool is an async Python function
-returning the tool's text, parsed with `json.loads`, fanned out with `asyncio.gather` —
+compose primitives with `code_execution` — every tool is an async JavaScript call
+answering `{ content, structuredContent, isError }`, the envelope in `structuredContent`,
+fanned out with `Promise.all` —
 and a background script with `wake_agent` is an alternative to a daemon watch for
 conditions the agent wants to express in code. Daemon watches stay for cost (no
 interpreter) and for hosts without scripts; health probes stay in the daemon because
