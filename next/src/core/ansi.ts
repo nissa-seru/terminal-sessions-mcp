@@ -197,16 +197,24 @@ export const PARTIAL_QUIET_MS = 500;
 /**
  * Compile a caller's line pattern (watch, wait_for, `ready.pattern`, `fail.pattern`):
  * on the linear-time engine (`compileUserRegex`), and refused when it matches the
- * empty string, unless its match on a line of spaces takes the spaces (`^\s*$`):
- * one that matches the empty string anywhere (`x*`, `(error)?`) would match every
- * line, and the splitter offers no empty line (`^$` could never match). Throws
- * invalid_argument, so a bad pattern fails when the watch or service is created,
- * never later.
+ * empty string, unless its match on a space takes the space (`^\s*$`) and it
+ * matches the empty string nowhere inside a short line: one that matches it
+ * anywhere (`x*`, `(error)?`) would match every line, one that matches it between
+ * letters (`\s+|\B`) would match lines without what it looks for, and the splitter
+ * offers no empty line (`^$` could never match). Throws invalid_argument, so a bad
+ * pattern fails when the watch or service is created, never later.
  */
 export function compileLinePattern(pattern: string): RegExp {
   const re = compileUserRegex(pattern);
-  if (re.test('') && (re.test('x') || !re.exec(' ')?.[0])) {
-    const why = re.test('x') ? 'the empty string, so it would match every line' : 'the empty string and takes nothing from a line of spaces, and the splitter offers no empty line';
+  if (!re.test('')) return re;
+  const all = new RegExp(re.source, `${re.flags}g`);
+  const inside = ['xx', 'x x', ' x', 'x '].some((line) => [...line.matchAll(all)].some((m) => m[0] === ''));
+  if (re.test('x') || inside || !re.exec(' ')?.[0]) {
+    const why = re.test('x')
+      ? 'the empty string, so it would match every line'
+      : inside
+        ? 'the empty string inside a line, so it would match lines without what it looks for'
+        : 'the empty string and takes nothing from a single space, and the splitter offers no empty line';
     throw err('invalid_argument', `pattern /${pattern}/ matches ${why}: make it require at least one character`);
   }
   return re;

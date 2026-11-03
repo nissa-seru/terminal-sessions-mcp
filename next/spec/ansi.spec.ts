@@ -43,12 +43,13 @@ test('m2-10: a split write is reported once, complete — never cut at the chunk
   assert.deepEqual(m.feed('more\n'), [], 'text is never matched twice');
 });
 
-test('m2-10: patterns that match the empty string are refused unless they take a line of spaces (they would fire on every line, or never)', () => {
-  for (const p of ['x*', '(error)?', '^$', '', '\\B|READY', '^\\t*$']) refused(() => compileLinePattern(p), p);
+test('m2-10: patterns that match the empty string are refused, unless they take a line of spaces and match it inside no line (they would fire on lines without what they look for, or never)', () => {
+  for (const p of ['x*', '(error)?', '^$', '', '\\B|READY', '^\\t*$', '\\s+|\\B']) refused(() => compileLinePattern(p), p);
   assert.doesNotThrow(() => compileLinePattern('x+'));
-  // The reason fits the pattern: `^$` takes nothing from a line of spaces, and the splitter never offers an empty line.
+  // The reason fits the pattern: `^$` takes nothing from a single space, and the splitter never offers an empty line.
   assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line/);
-  assert.throws(() => compileLinePattern('^$'), /matches the empty string and takes nothing from a line of spaces, and the splitter offers no empty line/);
+  assert.throws(() => compileLinePattern('\\s+|\\B'), /matches the empty string inside a line, so it would match lines without what it looks for/);
+  assert.throws(() => compileLinePattern('^$'), /matches the empty string and takes nothing from a single space, and the splitter offers no empty line/);
   assert.doesNotThrow(() => compileLinePattern('^\\s*$'), 'a line of spaces is offered, and it matches one');
 });
 
