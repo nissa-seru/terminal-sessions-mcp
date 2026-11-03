@@ -319,21 +319,22 @@
   let typedSecret = false;
   let sendTimer = null;
   function send(data) {
-    if (!state.current || state.history || state.exited) return;
+    if (!state.current) return;
+    // tsg-7: typed while (re)attaching, it goes nowhere — and says so, before the checks below, which still
+    // read the session shown until the snapshot arrives.
+    if (state.attaching) {
+      notice('Attaching: that input was not sent. Type again once the terminal is back.');
+      return;
+    }
+    if (state.history || state.exited) return;
     if (state.role !== 'controller') {
       notice('You are observing. Take the seat to type.');
       return;
     }
-    // tsg-7: typed while disconnected or while (re)attaching, it goes nowhere — and says so. Nor after the
-    // stream ended: the page no longer shows what the input would land on (the house's read of 2f357bd, #22).
-    if (!rpc.open || state.attaching || state.streamEnded) {
-      notice(
-        !rpc.open
-          ? 'Not connected: that input was not sent.'
-          : state.attaching
-            ? 'Attaching: that input was not sent. Type again once the terminal is back.'
-            : 'The live stream ended: that input was not sent. Click the session to reattach.',
-      );
+    // tsg-7: typed while disconnected, it goes nowhere — and says so. Nor after the stream ended: the page no
+    // longer shows what the input would land on (the house's read of 2f357bd, #22).
+    if (!rpc.open || state.streamEnded) {
+      notice(!rpc.open ? 'Not connected: that input was not sent.' : 'The live stream ended: that input was not sent. Click the session to reattach.');
       return;
     }
     // G26: a password prompt left of the cursor makes this input secret until Enter or Ctrl-C.
@@ -384,7 +385,7 @@
   });
 
   /** The controller sizes the PTY to its view — columns and rows (tsg-11); observers keep the controller's size (G17). */
-  const canResize = () => term && state.role === 'controller' && !state.history && !state.exited && !state.streamEnded;
+  const canResize = () => term && state.role === 'controller' && !state.attaching && !state.history && !state.exited && !state.streamEnded;
   function maybeResize() {
     if (!canResize()) return;
     clearTimeout(resizeTimer);
@@ -901,6 +902,10 @@
 
   $('seat-btn').onclick = async () => {
     if (!state.current) return;
+    if (state.attaching) return notice('Attaching: the seat was not changed. Click again once the terminal is back.');
+    const id = state.current;
+    const seq = state.attachSeq;
+    const shown = () => state.current === id && state.attachSeq === seq;
     const mine = state.controller === state.me;
     if (mine) {
       // Releasing: no resize of ours may follow and take the seat back (the house's read of 2f357bd, #22).
@@ -909,10 +914,12 @@
       state.role = 'observer';
     }
     try {
-      const r = await tool('control', { session: state.current, action: mine ? 'release' : 'take' });
+      const r = await tool('control', { session: id, action: mine ? 'release' : 'take' });
+      if (!shown()) return;
       state.controller = r.controller;
       notice('');
     } catch (e) {
+      if (!shown()) return;
       notice(e.message);
     }
     state.role = state.controller && state.controller === state.me ? 'controller' : 'observer';
@@ -922,12 +929,14 @@
   };
 
   $('ctrlc').onclick = () => {
+    if (state.attaching) return notice('Attaching: ^C was not sent. Click again once the terminal is back.');
     if (state.current) tool('signal', { session: state.current, signal: 'SIGINT' }).catch((e) => notice(e.message));
   };
 
   $('close').onclick = async () => {
     const id = state.current;
     if (!id) return;
+    if (state.attaching) return notice('Attaching: nothing was closed. Click again once the terminal is back.');
     if (!closeArmed) {
       $('close').textContent = 'Confirm close';
       closeArmed = setTimeout(disarmClose, 3000);
