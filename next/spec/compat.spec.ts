@@ -190,6 +190,19 @@ test('a missing session’s advice on the compat profile names the compat tools,
   }
 });
 
+test('launch waits for its patterns 15 s, as 1.x polled them, and 2.5 s without', async () => {
+  const waits: Array<number | undefined> = [];
+  const stub = {
+    sessionSummary: () => undefined,
+    start: async (_c: Caller, o: { wait?: number }) => {
+      waits.push(o.wait);
+      throw new Error('stop here');
+    },
+  } as unknown as App;
+  for (const args of [{ readyPatterns: ['up'] }, { errorPatterns: ['FATAL'] }, {}]) await callTool('launch', { name: 'w', command: 'serve', ...args }, { app: stub, caller: A, resultText: 'json' }, compat);
+  assert.deepEqual(waits, [15_000, 15_000, 2_500]);
+});
+
 test('launch with cwd into an existing fish session groups the command as fish does, with begin and end', async () => {
   const typed: string[] = [];
   const stub = (flavor: 'fish' | 'posix') =>
