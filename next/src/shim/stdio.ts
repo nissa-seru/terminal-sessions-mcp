@@ -106,7 +106,7 @@ Settings (an empty value is unset):
   SESSION_SERVER_PORT (localhost, 3100). They take SESSION_SERVER_TOKEN when set, or a token in their URL.
   TSM_TOKEN applies to TSM_URL or the default address. Set TSM_URL to pair it with an old address.
   With a 1.x address and only TSM_TOKEN, TSM_TOKEN is not sent: use TSM_URL for that address or SESSION_SERVER_TOKEN for that token.
-  No termd is started for a 1.x address.
+  No termd is started for a 1.x setting; with an old address in TSM_URL, set TSM_NO_SPAWN=1 too.
 
 When nothing listens on a plain ws:// loopback TSM_URL, the shim starts termd on that port
 (detached, log <data-dir>/termd.log, stderr <data-dir>/termd.stderr.log), unless TSM_NO_SPAWN=1
