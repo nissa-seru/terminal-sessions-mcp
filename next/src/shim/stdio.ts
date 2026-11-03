@@ -31,9 +31,9 @@
  *    since the last accepted grant — goes in bounded windows, its
  *    answers are swallowed, and a refusal is logged. What expires in the queue
  *    is logged once per pass, by count and method.
- *  - An answer to the host's `initialize` that is not JSON-RPC 2.0, as 1.x's
- *    session server gives, is not termd's: the host gets -32000 saying so, and
- *    the shim exits 1.
+ *  - An answer to `initialize`, the host's or its replay after a reconnect,
+ *    that is not JSON-RPC 2.0, as 1.x's session server gives, is not termd's:
+ *    the shim says so and exits 1, and the host's own gets -32000 saying so.
  *  - When the URL is a plain ws:// loopback address and nothing listens, it
  *    starts termd — detached, same port, logging to <data-dir>/termd.log
  *    (rotated), its stderr kept in <data-dir>/termd.stderr.log — unless
@@ -750,11 +750,12 @@ function flushQueue(): void {
   maybeFinish();
 }
 
-function notTermd(p: Pending, m: Parsed): void {
-  const said = typeof m.error === 'string' ? ` (it said: ${m.error.slice(0, 200)})` : '';
+function notTermd(p: Pending | undefined, m: Parsed): void {
+  const what = m.error === undefined ? undefined : typeof m.error === 'string' ? m.error : isObj(m.error) ? `${String(m.error.code)} ${String(m.error.message)}` : JSON.stringify(m.error);
+  const said = what === undefined ? '' : ` (it said: ${what.slice(0, 200)})`;
   const message = `${target} answered initialize without JSON-RPC 2.0${said}: it is not termd, and may be 1.x's session server, which this shim cannot use; point TSM_URL at 2.0's termd (port 3101 by default)`;
   log(message);
-  failRequest(p.id, message);
+  if (p) failRequest(p.id, message);
   exit(1);
 }
 
@@ -1133,6 +1134,7 @@ function connect(): void {
       const replayedWhat = swallow.get(key(m.id));
       if (replayedWhat) {
         swallow.delete(key(m.id));
+        if (replayedWhat.method === 'initialize' && m.jsonrpc !== '2.0') return notTermd(undefined, m);
         replayed(replayedWhat, m);
         return;
       }

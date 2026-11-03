@@ -1721,6 +1721,23 @@ test("atc-6: an address where 1.x's session server answers initialize in its own
   }
 });
 
+test("atc-6: a reconnect whose replayed initialize is answered outside JSON-RPC 2.0, with a structured error, stops the shim, which quotes what it said", async () => {
+  const p = await peer((c, m) =>
+    c.index > 0 && m.method === 'initialize' ? ({ jsonrpc: undefined, error: { code: -32601, message: 'Unknown method: initialize' } } as unknown as Answer) : { result: {} },
+  );
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    assert.equal((await s.next(byId(1))).error, undefined);
+    p.conns[0]!.ws.terminate();
+    assert.equal(await exitWithin(s), 1);
+    assert.match(s.err.join(''), /answered initialize without JSON-RPC 2\.0 \(it said: -32601 Unknown method: initialize\): it is not termd/);
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 test('a shim credential follows the selected daemon address family', async () => {
   const d = await daemon(0, undefined, { 'tok-1x': 'agent:old@x', 'tok-2x': 'agent:new@x' });
   try {
