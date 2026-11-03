@@ -73,7 +73,7 @@ test('a shell whose prompts never carry the end mark is available from its first
 });
 
 for (const carries of ['a prompt whose end mark never comes', 'prompts that never carry the end mark'] as const) {
-  test(`keys a program took during a Run, then ${carries}: a queued Run is typed once the typed-ahead grace has passed`, async () => {
+  test(`keys a program took during a Run, then ${carries}: a queued Run is still typed`, async () => {
     const h = await harness({ promptDrawnWaitMs: 300, ...(carries === 'prompts that never carry the end mark' && { setup: (s) => (s.drawsPromptEnd = false) }) });
     const a = h.session.admit({ target: 'shell', line: 'sleep 30', principal: AGENT });
     assert.ok(a.admitted, JSON.stringify(a));
