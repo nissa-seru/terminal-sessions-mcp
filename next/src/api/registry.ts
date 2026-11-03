@@ -158,6 +158,7 @@ class CursorBook {
 
   constructor(
     private readonly file: string,
+    private readonly held: () => boolean,
     private readonly log?: RegistryOptions['log'],
   ) {
     try {
@@ -209,11 +210,15 @@ class CursorBook {
     this.timer.unref();
   }
 
+  resume(): void {
+    if (this.dirty) this.schedule();
+  }
+
   /** Write now if anything changed (durably; best effort: cursors are advisory, delivery is at-least-once). */
   flush(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
-    if (!this.dirty) return;
+    if (!this.dirty || !this.held()) return;
     this.dirty = false;
     try {
       const w = writeDurably(this.file, JSON.stringify(this.snapshot()));
@@ -224,7 +229,7 @@ class CursorBook {
         this.log?.('warn', `cursors are written but their directory could not be synced: ${w.error?.message ?? 'unknown error'}`, { file: this.file });
       }
     } catch {
-      this.dirty = true; // not written: the directory may be gone (forgotten) or the disk full, so the next flush retries
+      this.schedule(); // not written: the disk may be full, so it is tried again CURSOR_FLUSH_MS later
     }
   }
 
@@ -467,10 +472,13 @@ export class SessionRegistry {
     this.recover();
   }
 
+  private readonly holdsDataDir = (): boolean => this.opts.lock === false || this.dirLock !== undefined;
+
   /** Hold the data dir's lock (again, after `closeAll` released it) before writing to the data dir. */
   private ensureLock(): void {
     if (this.opts.lock === false || this.dirLock) return;
     this.dirLock = acquireDataDirLock(this.opts.dataDir);
+    for (const slot of this.slots.values()) slot.cursors.resume();
     // A lock whose holder is gone means the previous daemon did not drain: said in the log, not only by what recovery does next (the house's read of 59f660b, #22).
     const stale = this.dirLock.tookOver;
     if (stale) this.opts.log?.('warn', 'took over the data dir lock of a daemon that is gone (it did not drain)', { pid: stale.pid, startedAt: stale.startedAt !== undefined ? new Date(stale.startedAt).toISOString() : undefined, hostname: stale.hostname });
@@ -655,7 +663,7 @@ export class SessionRegistry {
     const refusal = recordRefusal(id, meta);
     if (refusal) this.opts.log?.('warn', refusal.message, { session: id });
     const owner = refusal ? UNOWNED : meta.owner ?? SYSTEM;
-    const cursors = new CursorBook(path.join(dir, 'cursors.json'), this.opts.log);
+    const cursors = new CursorBook(path.join(dir, 'cursors.json'), this.holdsDataDir, this.opts.log);
     const view = new HistoryEntry(id, journal, owner, meta.visibility ?? 'private', meta.closedAt !== undefined, retention, recordedOptions(meta, retention), cursors);
     this.slots.set(id, { id, dir, store, meta, cursors, view, ...(unjudged && { awaitsJudgement: true as const }) });
   }
@@ -1023,7 +1031,7 @@ export class SessionRegistry {
     const options = this.resolveOptions(o, reuse, retention);
     const { retention: _r, ...persisted } = options;
     const meta: Meta = { owner: o.owner, visibility: options.visibility, createdAt: Date.now(), retention, options: persisted };
-    const cursors = prev?.cursors ?? new CursorBook(path.join(dir, 'cursors.json'), this.opts.log);
+    const cursors = prev?.cursors ?? new CursorBook(path.join(dir, 'cursors.json'), this.holdsDataDir, this.opts.log);
     let integ: ReturnType<typeof prepareIntegration> | undefined;
     let session: Session;
     // A name with a record: while this life starts, the record is this life's (owner, visibility, options,
