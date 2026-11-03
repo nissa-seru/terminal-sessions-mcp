@@ -656,7 +656,7 @@ test('writeDurably surfaces a write failure and its guarded cleanup leaves no te
   }
 });
 
-test('writeDurably swallows only the directory-fsync codes that mean a filesystem cannot sync a directory — a real I/O error propagates (the house\'s read of the 36 commits, #22)', () => {
+test('cannotSyncDir names only the directory-fsync codes that mean a filesystem cannot sync a directory — a real I/O error is not one (the house\'s read of the 36 commits, #22)', () => {
   for (const code of ['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EPERM', 'EISDIR']) assert.equal(cannotSyncDir(code), true, code);
   for (const code of ['EIO', 'ENOSPC', 'EACCES', undefined]) assert.equal(cannotSyncDir(code), false, String(code));
 });
