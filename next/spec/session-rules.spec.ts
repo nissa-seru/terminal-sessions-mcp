@@ -167,7 +167,7 @@ test('G29 (core-14): a failed cancel does not label the Run\'s later natural end
   await h.session.close();
 });
 
-test('G29: SIGTERM then SIGKILL go to the terminal\'s foreground group when ^C and ^\\ fail, never to the shell', async () => {
+test('G29: SIGTERM goes to the terminal\'s foreground group when ^C and ^\\ fail, never to the shell', async () => {
   const h = await harness({ ignoreSignals: true });
   const a = h.session.admit({ target: 'shell', line: 'sleep 10', principal: AGENT });
   assert.ok(a.admitted);
