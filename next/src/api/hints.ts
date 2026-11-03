@@ -16,8 +16,8 @@ export const looksLikeShellOpener = (line: string | undefined): boolean => line 
 
 /**
  * The line with the parts a shell would not run as its own words blanked: quoted strings, backtick
- * substitutions, parenthesised groups (a subshell or `$(…)`: `set -e` there ends with it) and heredoc
- * bodies. `echo "build; set -e"`, `bash -c 'set -e; make'`, `(cd sub; set -e; make)` and
+ * substitutions, parenthesised groups (a subshell or `$(…)`: `set -e` there ends with it), heredoc
+ * bodies and comments. `echo "build; set -e"`, `bash -c 'set -e; make'`, `(cd sub; set -e; make)` and
  * `grep "x; set -e" f` turn nothing on in the shell that runs them (the house's read of 1cabc6a, #22).
  */
 function ownWords(line: string): string {
@@ -28,9 +28,12 @@ function ownWords(line: string): string {
   const emit = (s: string) => {
     if (depth === 0) out += s;
   };
+  let wordStart = true;
   for (let i = 0; i < line.length; ) {
     const c = line[i]!;
     if (c === '\\') {
+      // An escaped character is part of a word; an escaped newline is removed, and changes nothing.
+      if (line[i + 1] !== '\n') wordStart = false;
       emit(' ');
       i += 2;
     } else if (c === "'" || c === '"' || c === '`') {
@@ -38,19 +41,26 @@ function ownWords(line: string): string {
       while (j < line.length && line[j] !== c) j += c !== "'" && line[j] === '\\' ? 2 : 1;
       emit(' ');
       i = j + 1;
+      wordStart = false;
     } else if (c === '(') {
       emit(' ');
       depth++;
       i++;
+      wordStart = true;
     } else if (c === ')') {
       depth = Math.max(0, depth - 1);
       emit(' ');
       i++;
+      wordStart = true;
     } else if (c === '<' && line[i + 1] === '<' && line[i + 2] !== '<') {
       const m = /^<<-?\s*(?:'([^']*)'|"([^"]*)"|\\?([^\s;&|<>()]+))/.exec(line.slice(i));
       if (m) pending.push(m[1] ?? m[2] ?? m[3]!);
       emit(' ');
       i += m ? m[0].length : 2;
+      wordStart = false;
+    } else if (c === '#' && wordStart) {
+      const nl = line.indexOf('\n', i);
+      i = nl < 0 ? line.length : nl;
     } else if (c === '\n' && pending.length) {
       // Each body runs to the line that is its delimiter (leading tabs allowed, as with `<<-`).
       let j = i + 1;
@@ -64,9 +74,11 @@ function ownWords(line: string): string {
       }
       emit('\n');
       i = j;
+      wordStart = true;
     } else {
       emit(c);
       i++;
+      wordStart = /[\s;&|]/.test(c);
     }
   }
   return out;
@@ -76,10 +88,15 @@ function ownWords(line: string): string {
  * Does the line, at a command position of the shell that runs it, turn on errexit (`set -e`,
  * `set -euo pipefail`, `set -o errexit`)? In a session shell that stays on: the next failing
  * command ends the whole shell, and the Run in it ends `lost`. Inside a loop or an `if` branch
- * it still is the shell's own `set`; inside quotes, a subshell or a heredoc it is not. A hint only.
+ * it still is the shell's own `set`; inside quotes, a subshell or a heredoc it is not. The last
+ * such `set` on the line decides: a later `set +e` or `set +o errexit` turns it off. A hint only.
  */
-const ERREXIT = /(?:^|[;&|\n{]\s*|\b(?:then|do|else)\s+)set\s+(?:-[A-Za-df-z]*e[A-Za-z]*\b|-o\s+errexit\b)/;
-export const looksLikeErrexit = (line: string | undefined): boolean => line !== undefined && ERREXIT.test(ownWords(line));
+const ERREXIT_SET = /(?:^|[;&|\n{]\s*|\b(?:then|do|else)\s+)set\s+(?:([-+])[A-Za-df-z]*e[A-Za-z]*\b|([-+])o\s+errexit\b)/g;
+export const looksLikeErrexit = (line: string | undefined): boolean => {
+  let on = false;
+  if (line !== undefined) for (const m of ownWords(line).matchAll(ERREXIT_SET)) on = (m[1] ?? m[2]) === '-';
+  return on;
+};
 
 /** ssh's single-letter options that take a value (ssh(1)). */
 const SSH_OPT_WITH_ARG: ReadonlySet<string> = new Set([...'bBcDeEFIiJLlmOopPQRSWw']);
