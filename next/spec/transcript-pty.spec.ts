@@ -37,6 +37,7 @@ for (const shell of ['/bin/bash', '/bin/zsh'].filter(has)) {
       'echo done',
     ].join('; ');
     const chunks = await capture(shell, script, 80, 24);
+    assert.match(chunks.join(''), /\x1b\[2J[^]*\x1b\[3J|\x1b\[3J[^]*\x1b\[2J/, 'the real clear wrote ED 2 and ED 3');
     const r = await project(chunks, { cols: 80, rows: 24 });
     assert.equal(r.truncated, false);
     const lines = r.text.split('\n').filter((l) => l !== '');
