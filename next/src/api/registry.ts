@@ -1244,7 +1244,7 @@ export class SessionRegistry {
       try {
         await this.closeLive(slot, { ...opts, persist: true });
       } finally {
-        this.emit({ type: 'closed', id });
+        if (this.slots.get(id)?.view.kind === 'history') this.emit({ type: 'closed', id });
       }
     });
   }
@@ -1252,8 +1252,8 @@ export class SessionRegistry {
   /**
    * Close every live session (daemon shutdown). They reappear after a restart as history-only,
    * not closed. Cursors are flushed and the data dir's lock released last: after it has closed the
-   * sessions opened while it ran too, and no name's operation is pending. A session whose close
-   * throws before it becomes history is said in the log, stays live, and is not closed again.
+   * sessions opened while it ran too, and no name's operation is pending. A close that throws is
+   * said in the log; a session it leaves live stays live and is not closed again.
    */
   async closeAll(opts: { graceful?: boolean; reason?: string } = {}): Promise<void> {
     const closed = new Set<LiveEntry>();
@@ -1270,7 +1270,8 @@ export class SessionRegistry {
               try {
                 await this.closeLive(slot, { ...opts, persist: false });
               } catch (e) {
-                if (slot.view.kind === 'live') this.opts.log?.('warn', `session ${slot.id} could not be closed at shutdown, and stays live: ${e instanceof Error ? e.message : String(e)}`, { session: slot.id });
+                const why = e instanceof Error ? e.message : String(e);
+                this.opts.log?.('warn', slot.view.kind === 'live' ? `session ${slot.id} could not be closed at shutdown, and stays live: ${why}` : `session ${slot.id} was closed at shutdown, though its close failed: ${why}`, { session: slot.id });
               }
               if (slot.view.kind === 'history') this.emit({ type: 'closed', id: slot.id });
             }

@@ -184,6 +184,47 @@ test('closeAll closes each session once: one whose seal threw stays live, is sai
   assert.equal(fs.existsSync(path.join(dir, LOCK_FILE)), false, 'released at closeAll');
 });
 
+test('closeAll says when a close failed though the session became history, which it announces closed', async () => {
+  const dir = dataDir();
+  const logs: Array<{ level: string; text: string }> = [];
+  const reg = new SessionRegistry({ dataDir: dir, backend: fakeShellBackend(() => {}, { marks: 'rich' }), defaultShell: '/bin/bash', noUserRc: true, log: (level, text) => logs.push({ level, text }) });
+  const announced: string[] = [];
+  reg.onChange((c) => {
+    if (c.type === 'closed') announced.push(c.id);
+  });
+  const a = await reg.create({ id: 'a', owner: AGENT });
+  const close = a.close.bind(a);
+  a.close = async (o) => {
+    await close(o);
+    throw new Error('close refused');
+  };
+  await reg.closeAll({ reason: 'daemon-shutdown' });
+  assert.equal(reg.get('a')?.kind, 'history');
+  assert.deepEqual(announced, ['a']);
+  assert.ok(logs.some((l) => l.level === 'warn' && l.text.includes('session a was closed at shutdown, though its close failed') && l.text.includes('close refused')), JSON.stringify(logs));
+});
+
+test('close announces a session closed only once it is history: one whose seal threw stays live and is not announced', async (t) => {
+  const dir = dataDir();
+  const reg = new SessionRegistry({ dataDir: dir, backend: fakeShellBackend(() => {}, { marks: 'rich' }), defaultShell: '/bin/bash', noUserRc: true });
+  const announced: string[] = [];
+  reg.onChange((c) => {
+    if (c.type === 'closed') announced.push(c.id);
+  });
+  const a = await reg.create({ id: 'a', owner: AGENT });
+  const seal = a.journal.seal.bind(a.journal);
+  let calls = 0;
+  a.journal.seal = () => {
+    calls++;
+    if (calls === 1) throw new Error('seal refused');
+    seal();
+  };
+  t.after(() => reg.closeAll());
+  await assert.rejects(reg.close('a'), /seal refused/);
+  assert.equal(reg.get('a')?.kind, 'live');
+  assert.deepEqual(announced, []);
+});
+
 test('jr2-2: a lock naming a live pid that started after the lock was written is stale (pid reuse); a hostname does not decide', async () => {
   const dir = dataDir();
   fs.mkdirSync(dir, { recursive: true });
