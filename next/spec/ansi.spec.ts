@@ -17,7 +17,7 @@ const matches = (pattern: string, chunks: string[]) => {
   const m = matcher(pattern);
   return chunks.flatMap((c) => m.feed(c)).map((h) => h.match);
 };
-const refused = (f: () => unknown) => assert.throws(f, (e: unknown) => e instanceof TermError && e.code === 'invalid_argument');
+const refused = (f: () => unknown, message?: string) => assert.throws(f, (e: unknown) => e instanceof TermError && e.code === 'invalid_argument', message);
 
 test('m2-10: anchors mean the line’s start and end, however the output was chunked', () => {
   // One chunk holding several lines: `^ERROR` is the second line's start.
@@ -43,12 +43,12 @@ test('m2-10: a split write is reported once, complete — never cut at the chunk
   assert.deepEqual(m.feed('more\n'), [], 'text is never matched twice');
 });
 
-test('m2-10: patterns that match the empty string are refused (they would fire on every line)', () => {
-  for (const p of ['x*', '(error)?', '^$', '']) refused(() => compileLinePattern(p));
+test('m2-10: patterns that match the empty string are refused unless they take a line of spaces (they would fire on every line, or never)', () => {
+  for (const p of ['x*', '(error)?', '^$', '', '\\B|READY', '^\\t*$']) refused(() => compileLinePattern(p), p);
   assert.doesNotThrow(() => compileLinePattern('x+'));
-  // The reason fits the pattern: `^$` matches only an empty line, which the splitter never offers.
+  // The reason fits the pattern: `^$` takes nothing from a line of spaces, and the splitter never offers an empty line.
   assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line/);
-  assert.throws(() => compileLinePattern('^$'), /matches only an empty line, which is never offered/);
+  assert.throws(() => compileLinePattern('^$'), /matches the empty string and takes nothing from a line of spaces, and the splitter offers no empty line/);
   assert.doesNotThrow(() => compileLinePattern('^\\s*$'), 'a line of spaces is offered, and it matches one');
 });
 

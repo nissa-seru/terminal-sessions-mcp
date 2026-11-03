@@ -60,7 +60,7 @@ test('m2-10 (real bash): `^ERROR` and `done$` watches fire on lines inside one w
   assert.ok(found.matches.some((m) => m.line === 'ERROR: boom'), 'the same pattern means the same thing in search');
 });
 
-test('m2-5/m2-10: a pattern the engine refuses, or one that matches the empty string, fails at creation', async () => {
+test('m2-5/m2-10: a pattern the engine refuses, or one that matches the empty string without taking a line of spaces, fails at creation', async () => {
   await app.sessionOpen(C, { id: 'badpat' });
   for (const pattern of ['x*', '(unclosed', '(error)?']) {
     await assert.rejects(app.watch(C, { session: 'badpat', pattern }), invalid, pattern);
