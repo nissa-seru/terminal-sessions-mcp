@@ -922,7 +922,8 @@ export const TOOLS: ToolDef[] = [
       '`read` shows them: a line can hold both, and a match names the pipe that wrote its first character that showed (`stream`) and says `mixed` when both ' +
       'pipes wrote characters to it that showed (on a line too long to keep whole, within the head it keeps). Returns ' +
       'matched: false when the wait ends first, and at once with a `reason` when it can no longer be met (the shell exited, the Run ended). ' +
-      '`nextCursor` is the position of the match (or the journal’s end when nothing matched): pass it as the next wait’s `since` to go on from there.',
+      '`nextCursor` is the output event that held the match (or the journal’s end when nothing matched): a next wait given it as `since` goes on after that event, ' +
+      'so a later line in the same event is not seen by that wait; `read` from the match’s `cursor` and `offset` shows it.',
     inputSchema: {
       type: 'object',
       properties: {
