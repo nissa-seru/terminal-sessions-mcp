@@ -659,6 +659,38 @@ test('tg-19: a featureSets/update in flight when the connection drops is replaye
   }
 });
 
+test('tg-19: a reduction sent before an update the connection left unanswered is replayed before it, so the update the host sent last decides', async () => {
+  const p = await peer((c, m) => {
+    if (c.index === 0 && m.method === 'featureSets/update' && m.id === 3) return undefined;
+    return { result: {} };
+  });
+  const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });
+  try {
+    s.send(initMcpl(1));
+    await s.next(byId(1));
+    const wide = { effectiveCapabilities: ['tools', 'pushEvents', 'channels.lifecycle'] };
+    const reduction = { disabled: ['channels.lifecycle'] };
+    const replacement = { effectiveCapabilities: ['tools', 'channels.lifecycle'] };
+    s.send({ jsonrpc: '2.0', id: 2, method: 'featureSets/update', params: wide });
+    await s.next(byId(2));
+    s.send({ jsonrpc: '2.0', method: 'featureSets/update', params: reduction });
+    s.send({ jsonrpc: '2.0', id: 3, method: 'featureSets/update', params: replacement });
+    await until(() => p.conns[0]!.frames.some((f) => f.id === 3), 5000, 'the replacement to reach the peer');
+    p.conns[0]!.ws.terminate();
+    assert.equal((await s.next(byId(3))).error?.code, -32000);
+    s.send({ jsonrpc: '2.0', id: 4, method: 'ping' });
+    assert.deepEqual((await s.next(byId(4))).result, {});
+    const updates = p.conns[1]!.frames.filter((f) => f.method === 'featureSets/update').map((f) => f.params);
+    assert.deepEqual(updates, [wide, reduction, replacement], 'in the order the host sent them');
+    assert.ok(noReplayedAnswer(s));
+    s.end();
+    await s.exited;
+  } finally {
+    s.child.kill();
+    await p.close();
+  }
+});
+
 test('tg-19: an initialize the daemon answered starts the replayed picture over: a reconnect after it replays no grant or channel from before it', async () => {
   const p = await peer((_c, m) => (m.method === 'channels/open' ? { result: { channel: { id: 'terminal:k1' } } } : { result: {} }));
   const s = shim({ TSM_URL: `ws://127.0.0.1:${p.port}` });

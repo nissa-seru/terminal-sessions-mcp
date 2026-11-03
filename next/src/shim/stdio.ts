@@ -14,7 +14,8 @@
  *    closes the socket and exits 0.
  *  - When the socket drops, every request in flight is answered with -32000:
  *    its outcome is unknown, and the host must not blindly resend it (G16); it
- *    is not resent here either. The daemon numbers the requests it makes of the
+ *    is not resent here either, but for a featureSets/update, which the replay
+ *    sends again. The daemon numbers the requests it makes of the
  *    host per connection, so the shim gives them ids of its own and maps the
  *    host's answers back; an answer to a request from a connection that is gone
  *    is dropped, never passed on as the answer to a new one. The shim reconnects
@@ -23,7 +24,8 @@
  *    the reductions since, and its open channels, so the new connection is in
  *    the state the host believes it is in. The replay follows what the daemon
  *    did with what the host sent — a request counts when its answer says it took,
- *    a notification when it arrives, and a grant the daemon refused by failing
+ *    or, for a featureSets/update, when none came, a notification when it arrives,
+ *    and a grant the daemon refused by failing
  *    closed is replayed to fail closed again, among the first 10,000 refusals
  *    since the last accepted grant — goes in bounded windows, its
  *    answers are swallowed, and a refusal is logged. What expires in the queue
@@ -562,8 +564,9 @@ const ASKED_MAX = 4096;
 /**
  * What to replay on a new connection so it is in the host's state: its `initialize`; the MCPL grant
  * (the last request-form `featureSets/update` the daemon accepted) with every reduction since —
- * notification-form updates only ever add `disabled` feature sets (MCPL §6.7), so all of them since
- * the grant fold into one set, however many there were (the house's read of 4e37a11, #22); the
+ * notification-form updates only ever add `disabled` feature sets (MCPL §6.7), so those sent between
+ * two of the updates below fold into one set, however many there were, replayed in its place among
+ * them (the house's read of 4e37a11, #22); the
  * later request-form updates the daemon refused after running it, replayed after the grant in the
  * order sent — the daemon fails closed on a malformed one, to an empty grant with no tools, and only
  * its own handling of the same requests puts the new connection where the host was told the old one
@@ -575,7 +578,8 @@ const ASKED_MAX = 4096;
  * and one a closed connection never answered may have run, so it is kept with them;
  * and the channels the host has open (reopened without `history`: catch-up
  * resumes from the principal's `delivered` cursor, G22). A request's effect is recorded when its
- * answer arrives, a notification's when it does (it is never answered, and one that waits out the
+ * answer arrives, or for a featureSets/update when the connection closes first, a notification's
+ * when it does (it is never answered, and one that waits out the
  * queue is never forwarded), so what expired is reflected too (the house's read of 4e37a11, #22).
  */
 interface Grant {
@@ -1037,8 +1041,18 @@ function replayState(sock: WebSocket): void {
   if (replay.initialize) items.push({ m: replay.initialize, request: true, method: 'initialize' });
   if (replay.initialized) items.push({ m: replay.initialized, request: false, method: 'notifications/initialized' });
   if (replay.grant) items.push({ m: replay.grant.m, request: true, method: 'featureSets/update' });
-  for (const r of replay.refused) items.push({ m: r.m, request: true, method: 'featureSets/update', ...(r.unanswered ? { unanswered: true as const } : { refusedBefore: true as const }) });
-  if (replay.reduced.size) items.push({ m: { jsonrpc: '2.0', method: 'featureSets/update', params: { disabled: [...replay.reduced.keys()] } } as Parsed, request: false, method: 'featureSets/update' });
+  const reductions = [...replay.reduced].sort((a, b) => a[1] - b[1]);
+  let reduced = 0;
+  const reduce = (before: number) => {
+    const disabled: string[] = [];
+    while (reduced < reductions.length && reductions[reduced]![1] < before) disabled.push(reductions[reduced++]![0]);
+    if (disabled.length) items.push({ m: { jsonrpc: '2.0', method: 'featureSets/update', params: { disabled } } as Parsed, request: false, method: 'featureSets/update' });
+  };
+  for (const r of replay.refused) {
+    reduce(r.seq);
+    items.push({ m: r.m, request: true, method: 'featureSets/update', ...(r.unanswered ? { unanswered: true as const } : { refusedBefore: true as const }) });
+  }
+  reduce(Number.POSITIVE_INFINITY);
   for (const [channel, { m }] of replay.channels) items.push({ m, request: true, method: 'channels/open', channel });
   replaying = { items, next: 0, outstanding: 0, sock };
   pumpReplay();
