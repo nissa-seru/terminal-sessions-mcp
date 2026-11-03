@@ -25,6 +25,7 @@
  * survived or is lost (its end was never observed, so nothing is known to have stopped). The
  * codes and this account of them were read against each other (the house's read of 4e37a11, #22).
  */
+import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import WebSocket from 'ws';
@@ -364,19 +365,19 @@ function usageReport(argv: string[]): void {
   // report that says nothing was recorded (the house's read of 4e37a11, #22).
   const since = opts.since !== undefined ? Date.parse(opts.since) : Number.NEGATIVE_INFINITY;
   if (Number.isNaN(since)) throw new Error(`--since: not a date (ISO 8601, e.g. 2026-10-19T00:00:00Z): ${opts.since}`);
-  let records: ReturnType<typeof readUsage>;
+  let all: ReturnType<typeof readUsage>;
   try {
-    records = readUsage(file).filter((r) => r.ts >= since);
+    all = readUsage(file);
   } catch (e) {
     throw new Error(`cannot read the usage log: ${e instanceof Error ? e.message : String(e)}`);
   }
-  const report = analyze(records);
+  const report = analyze(all.filter((r) => r.ts >= since));
   if (json) {
     console.log(JSON.stringify(report, null, 2));
     return;
   }
   if (!report.calls) {
-    console.log(`no usage recorded in ${file}`);
+    console.log(all.length ? `no usage recorded in ${file} since ${opts.since}` : fs.existsSync(file) ? `no usage recorded in ${file}` : `no usage log at ${file}`);
     return;
   }
   console.log(`${report.calls} calls, ${report.from} → ${report.to} · by host: ${Object.entries(report.byHost).map(([k, v]) => `${k} ${v}`).join(', ')}`);

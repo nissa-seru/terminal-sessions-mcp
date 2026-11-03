@@ -676,7 +676,10 @@ test('tsm usage: the report and --since; a date that does not parse or a log tha
   }
   const missing = await tsm(['usage', '--file', path.join(tmp, 'none.jsonl')], {});
   assert.equal(missing.code, 0);
-  assert.match(missing.stdout, /^no usage recorded in /);
+  assert.match(missing.stdout, /^no usage log at .*none\.jsonl$/m);
+  const later = await tsm(['usage', '--file', file, '--since', new Date(T0 + 5000).toISOString()], {});
+  assert.equal(later.code, 0);
+  assert.match(later.stdout, /^no usage recorded in .*usage\.jsonl since 2026-10-19T10:00:05\.000Z$/m);
   const unknown = await tsm(['usage', '--bogus'], {});
   assert.equal(unknown.code, 1);
   assert.match(unknown.stderr, /unknown argument --bogus/);
