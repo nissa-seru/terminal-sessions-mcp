@@ -111,6 +111,7 @@ async function runOutput(ctx: ToolContext, session: string, runId: string, raw: 
   let cut = false;
   let since: number | undefined;
   let offset: number | undefined;
+  let whole = false;
   for (let page = 0; page < 4096; page++) {
     const o: Parameters<App['read']>[1] = { session, runId, maxBytes: 256 * 1024 };
     if (since !== undefined) o.since = since;
@@ -127,12 +128,16 @@ async function runOutput(ctx: ToolContext, session: string, runId: string, raw: 
       bytes -= utf8Length(parts.shift()!);
       cut = true;
     }
-    if (!r.more || (r.nextCursor === since && r.nextOffset === offset)) break;
+    if (!r.more || (r.nextCursor === since && r.nextOffset === offset)) {
+      whole = true;
+      break;
+    }
     since = r.nextCursor;
     offset = r.nextOffset;
   }
   const out = parts.join('');
-  return cut ? omitted(session, runId, out) : out;
+  const text = cut ? omitted(session, runId, out) : out;
+  return whole ? text : `${text}\n[… later output not read: read ${callArgs({ session, runId, since: since ?? 0, ...(offset ? { offset } : {}) })} to go on from here]`;
 }
 
 
