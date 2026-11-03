@@ -1,6 +1,7 @@
 /**
  * The journal's durability and retention edges, against real files: events the
- * disk refused are never silently dropped or renumbered (jr2-6: G10, G11, G19),
+ * disk refused are never silently dropped, nor renumbered unless the failed
+ * mark was refused too (jr2-6: G10, G11, G19),
  * age retention reaches the active file and an idle ring (jr2-7: G21, G26), the
  * rotation header stays small enough that retention holds (jr2-8), and every
  * journal has a persisted epoch (mcpl-4). Each test is named for its finding.
