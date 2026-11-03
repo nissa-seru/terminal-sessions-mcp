@@ -102,8 +102,8 @@ Settings (an empty value is unset):
   TSM_CONNECT_TIMEOUT_MS  how long a request may wait for a connection, default 15000 (a duration: 15s, 2m, 1h also read)
   TSM_DATA_DIR            data dir of a termd started here, default ~/.tsm (relative: from the cwd)
   TSM_NO_SPAWN=1          never start termd
-  1.x address names when TSM_URL is unset: SESSION_SERVER_URL, or SESSION_SERVER_HOST +
-  SESSION_SERVER_PORT. They take SESSION_SERVER_TOKEN when set, or a token in their URL.
+  1.x address names when TSM_URL is unset: SESSION_SERVER_URL, or SESSION_SERVER_HOST and/or
+  SESSION_SERVER_PORT (localhost, 3100). They take SESSION_SERVER_TOKEN when set, or a token in their URL.
   TSM_TOKEN applies to TSM_URL or the default address. Set TSM_URL to pair it with an old address.
   With a 1.x address and only TSM_TOKEN, TSM_TOKEN is not sent: use TSM_URL for that address or SESSION_SERVER_TOKEN for that token.
   No termd is started for a 1.x address.
