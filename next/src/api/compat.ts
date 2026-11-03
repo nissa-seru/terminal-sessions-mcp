@@ -766,6 +766,7 @@ export const COMPAT_TOOLS: ToolDef[] = [
         await ctx.app.sessionClose(ctx.caller, { session: a.session as string, force: a.graceful === false, forget: true });
         return json({ success: true, message: a.graceful === false ? 'Session forcefully terminated' : 'Session terminated gracefully' });
       } catch (e) {
+        if (e instanceof TermError && e.code === 'session_not_found') return json({ success: true, message: a.graceful === false ? 'Session forcefully terminated' : 'Session terminated gracefully' });
         return json({ success: false, message: compatWords((e as Error).message) });
       }
     },
