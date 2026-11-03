@@ -49,7 +49,7 @@ test('m2-10: patterns that match the empty string are refused (they would fire o
   // The reason fits the pattern: `^$` matches only an empty line, which the splitter never offers.
   assert.throws(() => compileLinePattern('x*'), /matches the empty string, so it would match every line/);
   assert.throws(() => compileLinePattern('^$'), /matches only an empty line, which is never offered/);
-  assert.throws(() => compileLinePattern('^\\s*$'), /matches only an empty line/);
+  assert.doesNotThrow(() => compileLinePattern('^\\s*$'), 'a line of spaces is offered, and it matches one');
 });
 
 test('cleanLine applies overwrites on the raw text: a U+E000 in the output is text, not a backspace', () => {

@@ -198,13 +198,13 @@ export const PARTIAL_QUIET_MS = 500;
  * Compile a caller's line pattern (watch, wait_for, `ready.pattern`, `fail.pattern`):
  * on the linear-time engine (`compileUserRegex`), and refused when it matches the
  * empty string: one that matches it anywhere (`x*`, `(error)?`) would match every
- * line, and one that matches only an empty line (`^$`, `^\s*$`) could never
- * match, since the splitter offers no empty line. Throws invalid_argument, so a
+ * line, and one that matches only an empty line (`^$`) could never match,
+ * since the splitter offers no empty line. Throws invalid_argument, so a
  * bad pattern fails when the watch or service is created, never later.
  */
 export function compileLinePattern(pattern: string): RegExp {
   const re = compileUserRegex(pattern);
-  if (re.test('')) {
+  if (re.test('') && (re.test('x') || !(re.test(' ') || re.test('\t')))) {
     const why = re.test('x') ? 'the empty string, so it would match every line' : 'only an empty line, which is never offered for matching (empty lines are dropped)';
     throw err('invalid_argument', `pattern /${pattern}/ matches ${why}: make it require at least one character`);
   }

@@ -937,3 +937,14 @@ test('a session silence watch stands down at the shell\'s exit, and its quiet is
     f.close();
   }
 });
+
+test('a pattern for a line of spaces, `^\\s*$`, is taken, and fires on such a line', async () => {
+  const f = bare();
+  try {
+    const w = f.manager.add({ pattern: '^\\s*$' }, A);
+    f.out('text\n   \n');
+    await until(() => f.firings(w.watchId).length === 1, 3000, 'the line of spaces matched');
+  } finally {
+    f.close();
+  }
+});
