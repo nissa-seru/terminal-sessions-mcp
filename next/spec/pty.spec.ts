@@ -678,6 +678,14 @@ test('a command the kernel could not execute is never spawned: the handle report
   assert.deepEqual(text.trim().split(/\s+/).sort(), cleanChildFds, 'through the launcher: only the standard descriptors');
 });
 
+test('a program its user may execute but not read runs, as the kernel runs it', async () => {
+  const xonly = path.join(tmp, 'execute-only-true');
+  fs.copyFileSync('/usr/bin/true', xonly);
+  fs.chmodSync(xonly, 0o111);
+  const exit = await new Promise<PtyExit>((resolve) => new NodePtyBackend().spawnProcess({ argv: [xonly], cwd: tmp, env: {} }).onExit(resolve));
+  assert.deepEqual([exit.spawnError, exit.exitCode], [undefined, 0]);
+});
+
 test('the launcher’s loop variable does not replace a caller’s `f`', async () => {
   const backend = new NodePtyBackend();
   let text = '';
