@@ -771,6 +771,29 @@ test('cursors written while their directory cannot be synced are logged once, no
   await cleanup(r2, r);
 });
 
+test('G22: a cursor write the disk refuses is tried again a second later, with no further change to set it off', async () => {
+  const r = rig();
+  const s = (await r.reg.ensure({ id: 'again', owner: A })).session;
+  await run(s, A, 'echo one');
+  await r.reg.close('again');
+  const h = hist(r.reg.get('again'));
+  const file = path.join(r.dir, 'sessions', 'again', 'cursors.json');
+  let refusing = true;
+  let tries = 0;
+  await renamesInto(
+    'cursors.json',
+    async (writes) => {
+      h.markRead(A, 5);
+      await until(() => tries >= 1, 3000, 'the debounced write, refused');
+      refusing = false;
+      await until(() => writes() === 1, 3000, 'the write tried again');
+      assert.equal((JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, { read: number }>)[A]!.read, 5);
+    },
+    () => (tries++, refusing),
+  );
+  await cleanup(r);
+});
+
 test('G18/G20: a new life\'s record that cannot be written before its start does not keep the session from starting, and the record is written once it has (the house\'s read of the 33 commits, PR #22, comment 6307350477, item 9)', async () => {
   const warnings: string[] = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-registry-'));

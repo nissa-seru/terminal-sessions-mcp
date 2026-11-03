@@ -224,7 +224,7 @@ class CursorBook {
         this.log?.('warn', `cursors are written but their directory could not be synced: ${w.error?.message ?? 'unknown error'}`, { file: this.file });
       }
     } catch {
-      this.dirty = true; // not written: the directory may be gone (forgotten) or the disk full, so the next flush retries
+      this.schedule(); // not written: the disk may be full, so it is tried again CURSOR_FLUSH_MS later
     }
   }
 
