@@ -190,6 +190,12 @@ test('a missing session’s advice on the compat profile names the compat tools,
   }
 });
 
+test('a missing Run’s advice on the compat profile names where a runId comes from there, not listSessions, which shows no Runs', async () => {
+  const r = await callTool('await', { runId: 'r1-000000' }, { app, caller: A, resultText: 'json' }, compat);
+  assert.equal(r.isError, true);
+  assert.match(r.text, /^run_not_found: run r1-000000 not found: the id comes from a runCommand or launch result, and a forgotten session's Runs are gone with it$/, r.text);
+});
+
 test('runCommand says when it stopped reading a Run’s output before its end', async () => {
   let n = 0;
   const stub = {
