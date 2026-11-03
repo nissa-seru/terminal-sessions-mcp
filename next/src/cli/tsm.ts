@@ -64,8 +64,8 @@ const USAGE = `tsm <command> [args] [--key value ...] [--json]
 A value takes the type of the tool's parameter (the daemon's schema decides): text stays text
 (--pattern 404); a yes/no flag stands alone (--queue; --queue=false turns it off); a list splits at
 commas (--keys Enter,C-c) or is JSON; an object is JSON (start --ready '{"pattern":"listening"}');
---key=value works everywhere. Durations (--wait and any --*-ms flag): 500ms, 20s, 2m, or plain
-milliseconds.
+--key=value works for every tool parameter; tsm's own --json and --until-done stand alone.
+Durations (--wait and any --*-ms flag): 500ms, 20s, 2m, or plain milliseconds.
 --json prints the result as JSON on stdout, and a daemon's error (a tool's error result, or an error
 the daemon answers a request with) as {"error": "..."} on stdout with exit 1; tsm's own refusals (a
 usage error, an unknown command, a connection it cannot make or loses) are text on stderr with exit 1,
