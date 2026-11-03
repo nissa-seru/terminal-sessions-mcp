@@ -5,7 +5,7 @@
                 ~/.volta/tools/image/packages/term-sessions-mcp/lib/node_modules/term-sessions-mcp
        YOU      your home directory's name (launchd does not expand ~ or $HOME)
      and start it:  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.animalabs.termd.plist
-     termd-launch.sh finds node (Volta, Homebrew, /usr/local, nvm's default version; or
+     termd-launch.sh finds node (Volta, Homebrew, /usr/local, nvm's current link, else its default version; or
      TSM_NODE_BIN=/path/to/node in EnvironmentVariables; TSM_NODE is the daemon's MCPL node
      name, not a path), puts those directories on PATH for process Runs, starts in $HOME,
      and logs to ~/Library/Logs/termd/termd.log (0600). The stderr file below catches what
