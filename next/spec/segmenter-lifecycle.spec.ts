@@ -198,6 +198,20 @@ test('m2-4/mcpl-2: a restart is one recovery message with the exit it cut short 
   assert.match(h.segments[1]!.head, /the shell had ended with code 1/);
 });
 
+test('a history Run whose output read throws at once renders with the output-missing note', async () => {
+  const src = fakeSource();
+  startRun(src, 'r1', B, 'echo hi');
+  endRun(src, 'r1');
+  const history = journalSource({ id: 's1', journal: src.journal, owner: A, run: (id) => src.journal.runs.run(id) });
+  (src.journal.runs as unknown as { output: () => never }).output = () => {
+    throw new Error('zz read failed');
+  };
+  const segs = await renderPicked(history, (await scanLifecycle(history, 0)).picked);
+  assert.deepEqual(segs.map((s) => s.kind), ['run']);
+  assert.match(segs[0]!.body ?? '', /the Run's output could not be read: zz read failed/);
+  assert.equal(segs[0]!.metadata.outputError, 'zz read failed');
+});
+
 for (const note of [false, true]) {
   test(`channel history folds a restart's exit into its recovery at every page size, and the page below it does not show that exit again${note ? ', with a group note between the lost Run and the recovery' : ''}`, async () => {
     const src = fakeSource();

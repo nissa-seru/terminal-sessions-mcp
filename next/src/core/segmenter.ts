@@ -332,7 +332,7 @@ export function journalSource(o: {
       return o.controller?.() ?? null;
     },
     run: (runId) => (o.run ? o.run(runId) : o.journal.runs.run(runId)),
-    runText: (runId) => o.transcript?.(runId) ?? journalRunText(o.journal.runs.output(o.journal, runId, { maxBytes: HISTORY_RUN_INPUT_BYTES }), { ...(o.cols !== undefined ? { cols: o.cols } : {}) }, runOf({ run: (id) => (o.run ? o.run(id) : o.journal.runs.run(id)) }, runId)),
+    runText: async (runId) => o.transcript?.(runId) ?? journalRunText(o.journal.runs.output(o.journal, runId, { maxBytes: HISTORY_RUN_INPUT_BYTES }), { ...(o.cols !== undefined ? { cols: o.cols } : {}) }, runOf({ run: (id) => (o.run ? o.run(id) : o.journal.runs.run(id)) }, runId)),
   };
 }
 
