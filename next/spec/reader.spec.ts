@@ -902,7 +902,8 @@ test('G11 / er-1 / er-8 / er-12 through the App and a real shell: pages by since
       gates.A[i]!.open();
       gates.B[i]!.open();
     }
-    await Promise.all([a, b]);
+    const runs = await Promise.all([a, b]);
+    await until(() => runs.every((r) => pg.run(r.runId!).state === 'exited'), 10_000, 'both producers to end');
     const order: string[] = [];
     for (const e of (await app.read(A, { session: 'pg', since: start, as: 'events', limit: 2000, maxBytes: 1024 * 1024 })).events!) {
       if (e.type === 'output' && e.stream !== 'pty' && e.runId !== undefined) order.push(e.runId);
