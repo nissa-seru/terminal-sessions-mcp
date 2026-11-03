@@ -52,8 +52,8 @@
  *
  * Where it connects: TSM_URL (default ws://127.0.0.1:3101) uses TSM_TOKEN.
  * Without TSM_URL, a 1.x bridge address from SESSION_SERVER_URL, or from SESSION_SERVER_HOST or SESSION_SERVER_PORT (either alone takes 1.x's default for the other, localhost or 3100), uses SESSION_SERVER_TOKEN when set, or a token in its URL.
- * A TSM_TOKEN with only a 1.x address and no legacy or URL token is not sent. Put the address in TSM_URL, or the token in SESSION_SERVER_TOKEN.
- * A 1.x address is never replaced by a daemon started here: a config naming another machine must not run its commands on this one, and a failure names the setting.
+ * A TSM_TOKEN with only a 1.x address and no legacy or URL token is not sent. Put the address in TSM_URL with TSM_NO_SPAWN=1, or the token in SESSION_SERVER_TOKEN.
+ * An address from a 1.x setting is never replaced by a daemon started here: a config naming another machine must not run its commands on this one, and a failure names the setting.
  *
  * Profile (§11): `--profile core|full|compat`, else TSM_PROFILE, else by the
  * name the host invoked: `terminal-sessions-mcp` (the 1.x name) serves the 1.x
@@ -805,7 +805,7 @@ setInterval(expireQueue, 250).unref();
 /** What to do about an address that does not answer, when the answer is not "wait". */
 function unreachableHint(): string {
   if (chosen.from && setting('TSM_TOKEN') && chosen.token === undefined && !url.searchParams.has('token')) {
-    return `; ${chosen.from} selected a 1.x address. TSM_TOKEN belongs to TSM_URL or the default 2.0 address and was not sent here; put this address in TSM_URL or put the token in SESSION_SERVER_TOKEN`;
+    return `; ${chosen.from} selected a 1.x address. TSM_TOKEN belongs to TSM_URL or the default 2.0 address and was not sent here; put this address in TSM_URL with TSM_NO_SPAWN=1, or put the token in SESSION_SERVER_TOKEN`;
   }
   if (chosen.from) {
     return `; the address came from ${chosen.from} (a 1.x setting), so no local daemon was started for it — 2.0's termd listens on 3101 by default: set TSM_URL, or start termd on that address`;
