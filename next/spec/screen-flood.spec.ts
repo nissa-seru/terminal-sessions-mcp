@@ -125,7 +125,7 @@ test('emu-2: settled() after 25 000 small chunks takes parser time, not a timer 
   s.dispose();
 });
 
-test('emu-2: a real PTY flood (`yes`) with the reader paused on pressure: bounded heap, nothing dropped, screen current at exit', async () => {
+test('emu-2: a real PTY flood (`yes`) with the reader paused on pressure: bounded heap, nothing dropped, screen current at exit', { timeout: 60_000 }, async (t) => {
   // Low watermarks so the reader is certainly paused and resumed along the way.
   const s = new Screen({ cols: 100, rows: 30, highWater: 16 * 1024, lowWater: 4 * 1024 });
   // node-pty can lose unread Linux PTY output if its producer exits while reading is paused.
@@ -137,6 +137,9 @@ test('emu-2: a real PTY flood (`yes`) with the reader paused on pressure: bounde
     rows: 30,
     cwd: process.cwd(),
     env: { ...process.env, TERM: 'xterm-256color' } as Record<string, string>,
+  });
+  t.signal.addEventListener('abort', () => {
+    try { p.kill(); } catch {}
   });
   let seq = 0;
   let pauses = 0;
