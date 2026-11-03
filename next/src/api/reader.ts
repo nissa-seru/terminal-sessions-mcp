@@ -73,7 +73,8 @@
  *   if text followed. A page that ends on the alternate screen shows the
  *   full-screen program's frame (§6 rule 5) and says nothing of its last line:
  *   frames don't join as lines.
- * - `more` is true whenever retained events of the range remain after the page.
+ * - `more` is true whenever retained events of the range remain after the page,
+ *   unless all that remains is an unfinished control sequence a live page holds back.
  * - The projection (§6) runs at the session's geometry, and a Run's at the
  *   geometry it started with. A page starts in the lasting terminal state the
  *   output before it set (a scroll region, the alternate screen, modes; looked
