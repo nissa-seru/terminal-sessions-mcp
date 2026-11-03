@@ -564,10 +564,16 @@ export const COMPAT_TOOLS: ToolDef[] = [
       const began = clocks.monotonic();
       // 1.x launched into a fresh session in `cwd`; into an existing one, change there first (atc-22). The command
       // goes in a group of its own, so a `&` or `;` in it cannot split it from the cd and run in the old directory;
-      // the newline before the closing brace keeps a trailing `&` or comment from taking it (the house's read of 1cabc6a, #22).
+      // the newline before the group's close keeps a trailing `&` or comment from taking it (the house's read of 1cabc6a, #22).
       const existing = summaryOf(ctx, name);
       const exists = existing !== undefined && existing.state !== 'exited';
-      const command = exists && typeof a.cwd === 'string' ? `cd -- ${shellQuote(a.cwd)} && {\n${a.command as string}\n}` : (a.command as string);
+      const fish = exists && ctx.app.runFlavor(ctx.caller, name) === 'fish';
+      const command =
+        exists && typeof a.cwd === 'string'
+          ? fish
+            ? `cd -- '${a.cwd.replace(/[\\']/g, '\\$&')}' && begin\n${a.command as string}\nend`
+            : `cd -- ${shellQuote(a.cwd)} && {\n${a.command as string}\n}`
+          : (a.command as string);
       // Without patterns 1.x waited 2 s and said `running`: wait just past the 2 s liveness window (atc-7).
       const o: Parameters<App['start']>[1] = { session: name, command, name, wait: ready || fail ? 30_000 : 2_500 };
       if (a.cwd !== undefined && !exists) o.cwd = a.cwd as string;

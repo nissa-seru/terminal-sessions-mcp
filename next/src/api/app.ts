@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { clocks } from '../core/clock.js';
 import { err, TermError } from '../core/errors.js';
 import { inputBytes } from '../core/keys.js';
-import type { PlumbingOf } from '../core/plumbing.js';
+import type { PlumbingOf, ShellFlavor } from '../core/plumbing.js';
 import { validateServiceSpec, type ServiceSpec } from '../core/probes.js';
 import { journalRunText, promptLine, Segmenter, withLossNotes, type RunText, type SegmenterOptions } from '../core/segmenter.js';
 import { ServiceManager, type ServiceInfo } from '../core/services.js';
@@ -561,6 +561,11 @@ export class App {
   sessionSummary(caller: Caller, id: string): SessionSummary | undefined {
     const s = this.registry.get(id);
     return s !== undefined && this.can(caller.principal, s, 'observe') ? this.summary(s) : undefined;
+  }
+
+  runFlavor(caller: Caller, id: string): ShellFlavor | undefined {
+    const s = this.registry.get(id);
+    return s?.kind === 'live' && this.can(caller.principal, s, 'observe') ? s.session.runFlavor : undefined;
   }
 
   async sessionOpen(
