@@ -827,46 +827,141 @@ test('2f357bd: ^C interrupts the foreground job; Close asks twice; the activity 
   }
 });
 
-test('^C and the seat button clicked while another session attaches are not sent, and say so, as typed input is (tsg-7)', async (t) => {
+/** The App's session-acting calls, as `method:session`, in the order they reach it. */
+function spyOnApp(): { calls: string[]; restore: () => void } {
+  const app = (server as unknown as { opts: { app: App } }).opts.app as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const calls: string[] = [];
+  const names = ['signal', 'control', 'resize', 'sessionClose', 'sessionList'];
+  const own = names.map((n) => [n, app[n]!] as const);
+  for (const [n, f] of own) app[n] = (...args: unknown[]) => {
+    calls.push(`${n}:${(args[1] as { session?: string } | undefined)?.session ?? ''}`);
+    return f.apply(app, args);
+  };
+  return { calls, restore: () => { for (const [n] of own) delete app[n]; } };
+}
+
+/** Holds the server's answer to each terminal/attach while `held` is set; `reached` resolves when one is held. */
+function holdAttach(): { hold: () => Promise<void>; release: () => void; restore: () => void } {
+  const native = server as unknown as { nativeAttach: (...args: unknown[]) => Promise<unknown> };
+  const attachNow = native.nativeAttach.bind(server);
+  let held: { reached: () => void; released: Promise<void>; release: () => void } | undefined;
+  native.nativeAttach = async (...args) => {
+    const h = held;
+    if (h) {
+      h.reached();
+      await h.released;
+    }
+    return attachNow(...args);
+  };
+  return {
+    hold: () =>
+      new Promise<void>((reached) => {
+        let release!: () => void;
+        const released = new Promise<void>((r) => (release = r));
+        held = { reached, released, release };
+      }),
+    release: () => {
+      const h = held;
+      held = undefined;
+      h?.release();
+    },
+    restore: () => delete (native as Partial<typeof native>).nativeAttach,
+  };
+}
+
+test('while another session attaches, ^C, the seat button, Close, a resize and typed input act on neither session, and each says so (tsg-7)', async (t) => {
   if (skip || !browser) return t.skip(skip || 'no browser');
   const a = await agent();
   await a.call('session_open', { session: 'hx', visibility: 'shared' });
   await a.call('session_open', { session: 'hy', visibility: 'shared' });
-  type Attach = (...args: unknown[]) => Promise<unknown>;
-  const native = server as unknown as { nativeAttach: Attach };
-  const attachNow = native.nativeAttach.bind(server);
-  let held = false;
-  let entered!: () => void;
-  const attaching = new Promise<void>((r) => (entered = r));
-  let release!: () => void;
-  const released = new Promise<void>((r) => (release = r));
-  native.nativeAttach = async (...args) => {
-    if (held) {
-      entered();
-      await released;
-    }
-    return attachNow(...args);
-  };
+  await a.call('run', { session: 'hy', command: 'echo HY-READY' });
+  await a.call('run', { session: 'hx', command: 'echo HX-READY' });
+  const spy = spyOnApp();
+  const attach = holdAttach();
   const problems: string[] = [];
   const page = await openGui(`http://127.0.0.1:${port}/?token=tg`, problems);
   try {
     await pick(page, 'hx');
-    await page.waitForFunction(`${rows}.includes('$')`, { timeout: 10_000 });
+    await page.waitForFunction(`${rows}.includes('HX-READY')`, { timeout: 10_000 });
     await takeSeat(page, a, 'hx');
-    held = true;
+    // The GUI holds hx's seat, so each of these would act on hy, the session being attached.
+    let reached = attach.hold();
     await pick(page, 'hy');
-    await attaching;
+    await reached;
+    await page.setViewport({ width: 700, height: 420 });
+    // The page's resize waits 150 ms after the frame that saw the new size: a timer set after two more
+    // frames, for longer, fires after it on the page's own timer queue.
+    await page.evaluate('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 200))))');
     await page.click('#ctrlc');
     await page.waitForFunction(`${noticeText}.includes('^C was not sent')`, { timeout: 5000 });
     await page.click('#seat-btn');
     await page.waitForFunction(`${noticeText}.includes('the seat was not changed')`, { timeout: 5000 });
-    held = false;
+    await page.click('#close');
+    await page.waitForFunction(`${noticeText}.includes('nothing was closed')`, { timeout: 5000 });
+    const listed = spy.calls.length;
+    attach.release();
+    await page.waitForFunction(`${rows}.includes('HY-READY')`, { timeout: 10_000 });
+    // The session list the GUI asks for once attached comes after every click on its connection.
+    await until(() => spy.calls.slice(listed).some((c) => c.startsWith('sessionList:')), 10_000, 'the session list after the attach');
+    assert.deepEqual(spy.calls.filter((c) => /^(signal|control|resize|sessionClose):hy$/.test(c)), [], 'nothing reached hy');
+    assert.equal(registry.get('hy')?.kind, 'live');
+    // Back to hx, typed at while hy (where the GUI observes) is still shown: the attach is what the notice names.
+    reached = attach.hold();
+    await pick(page, 'hx');
+    await reached;
+    await page.click('#term');
+    await page.keyboard.type('x');
+    await page.waitForFunction(`${noticeText}.includes('Attaching: that input was not sent')`, { timeout: 5000 });
+    attach.release();
+    await page.waitForFunction(`${rows}.includes('HX-READY')`, { timeout: 10_000 });
+    assert.deepEqual(inputsOf('hx'), []);
+    assert.deepEqual(problems, []);
+  } finally {
+    attach.release();
+    attach.restore();
+    spy.restore();
+    await page.close();
+    a.close();
+  }
+});
+
+test("a seat answer that arrives after another session was selected is that session's no longer, and is not applied to it", async (t) => {
+  if (skip || !browser) return t.skip(skip || 'no browser');
+  const a = await agent();
+  await a.call('session_open', { session: 'hz', visibility: 'shared' });
+  await a.call('session_open', { session: 'hw', visibility: 'shared' });
+  await a.call('control', { session: 'hz', action: 'release' });
+  const app = (server as unknown as { opts: { app: App } }).opts.app as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const control = app.control!;
+  let reached!: () => void;
+  const asked = new Promise<void>((r) => (reached = r));
+  let release!: () => void;
+  const released = new Promise<void>((r) => (release = r));
+  let answered!: Promise<unknown>;
+  app.control = (...args: unknown[]) => {
+    reached();
+    answered = released.then(() => control.apply(app, args));
+    return answered;
+  };
+  const problems: string[] = [];
+  const page = await openGui(`http://127.0.0.1:${port}/?token=tg`, problems);
+  try {
+    await pick(page, 'hz');
+    await page.waitForFunction(`document.getElementById('seat').textContent === 'seat free'`, { timeout: 10_000 });
+    await page.click('#seat-btn');
+    await asked;
+    await pick(page, 'hw');
+    await page.waitForFunction(`document.getElementById('seat').textContent === 'seat: agent:g@test'`, { timeout: 10_000 });
     release();
-    await page.waitForFunction(`document.getElementById('seat').textContent !== 'you hold the seat'`, { timeout: 10_000 });
+    await answered;
+    // Output the agent makes now reaches the GUI after the seat answer, on the same connection.
+    await a.call('run', { session: 'hw', command: 'echo HW-AFTER' });
+    await page.waitForFunction(`${rows}.includes('HW-AFTER')`, { timeout: 10_000 });
+    assert.equal(await page.evaluate<string>(`document.getElementById('seat').textContent`), 'seat: agent:g@test', "hw's seat is the agent's, as hw's attach said");
     assert.deepEqual(problems, []);
   } finally {
     release();
-    delete (native as Partial<typeof native>).nativeAttach;
+    delete (app as Partial<typeof app>).control;
     await page.close();
     a.close();
   }
