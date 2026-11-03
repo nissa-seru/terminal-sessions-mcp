@@ -2904,10 +2904,15 @@ test("a catch-up's places go to what the principal is owed: an exit that cut sho
     const other = { principal: B, connectionId: 'cx-b' };
     await f.app.sessionOpen(other, { id: 'cx-other', visibility: 'shared' });
     const s = live(f.registry, 'cx-other');
-    const theirs = await f.app.run(other, { session: 'cx-other', command: 'sleep 5', target: 'process', wait: 0 });
+    const held = gate();
+    const theirs = await f.app.run(other, { session: 'cx-other', command: held.wait, target: 'process', wait: 0 });
     await until(() => s.run(theirs.runId!).state === 'running', 5000, 'their Run to start');
     await f.app.run(other, { session: 'cx-other', command: 'exit 9', wait: 0 });
-    await until(() => s.journal.since(0).events.some((e) => e.type === 'session.exit'), 8000, 'their shell to exit');
+    const exitOf = () => s.journal.since(0).events.find((e) => e.type === 'session.exit');
+    await until(() => exitOf() !== undefined, 8000, 'their shell to exit');
+    const atExit = s.run(theirs.runId!);
+    assert.ok(atExit.seq.admit < exitOf()!.seq && (atExit.seq.end === undefined || atExit.seq.end > exitOf()!.seq), 'their Run was under way at the exit');
+    held.open();
     await f.lane.handle('featureSets/update', { effectiveCapabilities: FULL_GRANT }, f.ctx);
     await until(() => f.inside.catchingUp === undefined && own.every((id) => sentAbout(f.sent, id).length > 0), 8000, 'every completion of its own replayed');
     const summaries = f.sent.filter((m) => m.method === 'push/event' && /:summary[:~]/.test((m.params as { eventId?: string }).eventId ?? ''));
