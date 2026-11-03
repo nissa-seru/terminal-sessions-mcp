@@ -173,8 +173,8 @@ test('GUI: snapshot on attach, observers cannot type, the seat holder types, and
   const echoedByGui = after.filter((e) => e.type === 'input' && e.principal === HUMAN && cpr.test(e.data));
   assert.deepEqual(echoedByGui, [], "the GUI's emulator did not answer");
 
-  // The other query kinds the page swallows: DA1, a colour query (OSC 11) and DECRQSS. Each gets the daemon's one
-  // reply and nothing from the page; its xterm would answer all three on its own.
+  // The other query kinds the page swallows: DA1, a colour query (OSC 11) and DECRQSS. The daemon answers DA1 and
+  // DECRQSS once each, the page nothing; its xterm would answer all three on its own.
   const before2 = journal.lastSeq;
   // The CPR reply above landed in the tty's input after its command ended; readline holds its tail: clear the line first.
   await page.keyboard.down('Control');
