@@ -1301,7 +1301,7 @@ export class SessionRegistry {
     return removed;
   }
 
-  /** Delete a history entry and its files — the journal, and its command files under /tmp (jr2-12). The application layer checks the `destroy` verb. */
+  /** Delete a history entry and its files — the journal, and its command files in its `shell` directory (jr2-12). The application layer checks the `destroy` verb. */
   async remove(id: string): Promise<void> {
     return this.withLock(fold(id), async () => {
       const slot = this.slots.get(id);
