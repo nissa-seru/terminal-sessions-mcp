@@ -752,8 +752,9 @@ export async function replayNewest(src: ReplaySource, opts: { limit: number; bef
   const picked: Picked[] = []; // newest first
   let to = (opts.before ?? src.journal.lastSeq + 1) - 1;
   let truncated = false;
-  // Scanning backwards, a recovery waits for the exit that may precede it (only run ends between).
-  let recovery: Picked | undefined;
+  // Scanning backwards, a recovery waits for the exit that may precede it; only Run ends and what the restart
+  // records lie between.
+  let recovery: Picked | undefined = opts.before !== undefined ? await recoveryFrom(src, opts.before) : undefined;
   const oldest = src.journal.oldestSeq ?? 1;
   outer: while (limit > 0 && to >= oldest && budget > 0) {
     const page = src.journal.tail(Math.min(HISTORY_PAGE, budget), to);
@@ -768,14 +769,19 @@ export async function replayNewest(src: ReplaySource, opts: { limit: number; bef
       } else if (ev.type === 'session.exit' && recovery) {
         recovery.exit = ev;
         recovery = undefined;
+        if (truncated) break outer;
         continue;
-      } else if (LIFE_EVENTS.has(ev.type)) recovery = undefined;
+      } else if (LIFE_EVENTS.has(ev.type)) {
+        recovery = undefined;
+        if (truncated) break outer;
+      }
       let p: Picked | undefined;
       if (ev.type === 'recovered') recovery = p = { ev, lost: { principals: [], count: 0 } };
       else if (ev.type === 'run.end' || ev.type === 'watch.fired' || ev.type === 'session.exit' || ev.type === 'run.waiting' || ev.type === 'note' || (ev.type === 'service' && ev.status !== 'starting')) p = { ev };
       if (!p) continue;
       if (picked.length === limit) {
         truncated = true;
+        if (recovery && recovery !== p) continue;
         break outer;
       }
       picked.push(p);
@@ -785,6 +791,20 @@ export async function replayNewest(src: ReplaySource, opts: { limit: number; bef
   }
   if (budget <= 0 && to >= oldest) truncated = true;
   return { segments: await renderPicked(src, picked.reverse()), truncated };
+}
+
+async function recoveryFrom(src: ReplaySource, before: Seq): Promise<Picked | undefined> {
+  let budget = HISTORY_MAX_EVENTS;
+  for (const page of src.journal.pages(before - 1, HISTORY_PAGE)) {
+    for (const ev of page.events) {
+      if (ev.type === 'recovered') return { ev, lost: { principals: [], count: 0 } };
+      if (LIFE_EVENTS.has(ev.type) || ev.type === 'session.exit') return undefined;
+    }
+    budget -= page.events.length;
+    if (budget <= 0) return undefined;
+    await yieldTurn();
+  }
+  return undefined;
 }
 
 // ───────────── the live segmenter ─────────────
