@@ -595,7 +595,8 @@ export const COMPAT_TOOLS: ToolDef[] = [
           }
         }
         // The bounded logs are a preview and move no read cursor (readFor); say when they were cut.
-        const res: Record<string, unknown> = { status: launchStatus(service), logs: await tailLogLines(ctx, name, 50, a.raw === true, null), sessionId: name, runId: r.runId, service };
+        const logs = await tailLogLines(ctx, name, 50, a.raw === true, null).catch((e: Error) => [`[the output could not be read: ${compatWords(e.message)}]`]);
+        const res: Record<string, unknown> = { status: launchStatus(service), logs, sessionId: name, runId: r.runId, service };
         if (evidence !== undefined) res.evidence = evidence;
         return json(res);
       } catch (e) {
