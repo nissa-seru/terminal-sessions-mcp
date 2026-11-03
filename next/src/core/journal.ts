@@ -568,6 +568,8 @@ export class Journal {
    */
   private armMarkRetry(): void {
     if (this.markTimer) clearTimeout(this.markTimer);
+    this.markTimer = undefined;
+    if (this.handedOn) return;
     this.markTimer = setTimeout(() => {
       this.markTimer = undefined;
       if (this.sealed) return;
@@ -673,8 +675,8 @@ export class Journal {
         // A sealed journal issues nothing after this: its reservation goes back to exactly its last seq. Left a
         // seq ahead, for the next issue a sealed journal never makes, it read after the next reboot as a
         // torn-write gap for a seq never issued (an independent read of the fix for comment 6307349700).
-        if (this.sealed) this.writeReservation(this.seq, false);
-        else this.keepMark();
+        if (!this.sealed) this.keepMark();
+        else if (this.cold!.setHighWater) this.writeReservation(this.seq, false);
       }
       return this.coldError === null;
     } finally {
@@ -704,6 +706,8 @@ export class Journal {
     this.handedOn = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
+    if (this.markTimer) clearTimeout(this.markTimer);
+    this.markTimer = undefined;
   }
 
   /**

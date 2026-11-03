@@ -125,6 +125,50 @@ test('jr2-6: a sealed journal handed on, as a new life or the registry\'s releas
   }
 });
 
+test('jr2-6: a journal handed on unsealed, as the registry\'s release can leave one, no longer retries its reservation', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dir = tmpDir();
+  try {
+    let refusing = true;
+    class MarkRefused extends FileStore {
+      tries = 0;
+      override setHighWater(change: Parameters<FileStore['setHighWater']>[0]): boolean {
+        this.tries++;
+        return refusing ? false : super.setHighWater(change);
+      }
+    }
+    const cold = new MarkRefused(dir);
+    const j = new Journal({ cold });
+    j.append(out('a'));
+    assert.equal(cold.tries, 1, 'the reservation was tried, and refused');
+    j.handOn();
+    refusing = false;
+    t.mock.timers.tick(60_000);
+    assert.equal(cold.tries, 1, 'not tried again once the store is another\'s');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('jr2-6: a sealed journal over a store that keeps no high water writes its ring once the disk takes writes', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const dir = tmpDir();
+  try {
+    const cold = new FullDisk(dir);
+    (cold as { setHighWater?: unknown }).setHighWater = undefined;
+    const j = new Journal({ cold });
+    for (let i = 0; i < 3; i++) j.append(out(`before-${i}`));
+    cold.broken = true;
+    for (let i = 0; i < 5; i++) j.append(out(`only-in-ring-${i}`));
+    j.seal();
+    cold.broken = false;
+    t.mock.timers.tick(60_000);
+    assert.deepEqual(seqs(onDisk(dir)), [1, 2, 3, 4, 5, 6, 7, 8]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('jr2-6/G10/G11: a journal sealed while the disk still refuses leaves a high water: the next journal numbers above it and records the hole', () => {
   const dir = tmpDir();
   try {
