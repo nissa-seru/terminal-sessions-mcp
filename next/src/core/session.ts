@@ -2785,7 +2785,7 @@ export class Session {
    * The empty line's file goes at the prompt after its pre-execution mark, or once the session gave up on
    * it. This runs inside the prompt's handling, which must go on whatever the unlink does: a file that
    * cannot be removed now (its parent made read-only, say) stays listed for the session's
-   * cleanup at close, and its line runs nothing if it is read late, since the file is empty.
+   * cleanup at close, and if its line is read late it runs only the file's status capture.
    */
   private dropPromptProbe(): void {
     const probe = this.promptProbe;
