@@ -64,7 +64,7 @@ process.stdout.write(JSON.stringify({ one, two, slow, slowState: session.run(slo
 setInterval(() => {}, 1000);
 `;
 
-test('tg-11/G20: after a SIGKILLed daemon, every admitted Run is terminal and each Run reads as its own', { timeout: 30_000 }, async () => {
+test('tg-11/G20: after daemon SIGKILL, all admitted Runs are terminal; marker outputs stay distinct and queued output is empty', { timeout: 30_000 }, async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-restart-'));
   // The SIGKILLed child cannot remove its temp files: they go under the data dir.
   const childTmp = path.join(dataDir, 'tmp');
