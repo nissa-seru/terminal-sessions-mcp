@@ -294,7 +294,7 @@ test('the package ships what the units run: the launcher, both units, the config
   for (const f of fs.readdirSync(CONFIG)) assert.ok(shipped.has(`next/config/${f}`), `next/config/${f} ships`);
   // What the units point at inside the package is in it.
   const unit = fs.readFileSync(path.join(CONFIG, 'termd.service'), 'utf8');
-  const execStart = /^ExecStart=\/bin\/sh PACKAGE\/(\S+)/m.exec(unit);
+  const execStart = /^ExecStart=\/bin\/sh "?PACKAGE\/([^\s"]+)/m.exec(unit);
   assert.ok(execStart && shipped.has(execStart[1]!), `the unit's ExecStart target ships: ${execStart?.[1]}`);
   const plist = fs.readFileSync(path.join(CONFIG, 'com.animalabs.termd.plist'), 'utf8');
   const program = /<string>PACKAGE\/([^<]+)<\/string>/.exec(plist);
