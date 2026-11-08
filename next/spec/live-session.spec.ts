@@ -108,6 +108,19 @@ for (const sh of shells) {
       assert.deepEqual(out(sourced, await ran(sourced, both)), ['profile_ok|rc_ok']);
     });
 
+    test('a startup file reading one key holds the session, starting, until it is answered', { skip: sh.name === 'fish' ? 'fish config has no prompt read here' : false }, async () => {
+      const read = sh.name === 'zsh' ? 'read -rsk1 startup_answer' : 'read -rsn1 startup_answer';
+      const s = await open(shell, { rc: `${read}\necho STARTUP_DONE:$startup_answer\n`, waitMs: 1000 });
+      const f = s.front();
+      assert.notEqual(f.state, 'prompt');
+      assert.equal(f.state === 'running' || f.state === 'waiting' ? f.starting : f.state, true);
+      assert.equal((await s.run('echo no', { waitMs: 500 })).kind, 'refused');
+      await s.send('Z', { waitMs: 3000, until: /STARTUP_DONE:Z/ });
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      assert.equal(s.front().state, 'prompt');
+      assert.deepEqual(out(s, await ran(s, 'echo ready')), ['ready']);
+    });
+
     test('a startup file that asks a question holds the session until it is answered', { skip: sh.name === 'fish' ? 'fish config has no prompt read here' : false }, async () => {
       const s = await open(shell, { rc: 'read ANSWER\nexport ANSWER\n', waitMs: 1500 });
       const f = s.front();
@@ -238,28 +251,37 @@ for (const sh of shells) {
       assert.match(b, search);
     });
 
-    test('send types nothing while a prompt hook outlasts its wait with the terminal still canonical, and the same keys go in once the prompt is drawn', async () => {
+    test('send types nothing while a prompt hook outlasts its wait, and the same keys go in once the prompt is drawn', async () => {
       const rc = sh.name === 'fish' ? 'function fish_prompt; sleep 2; echo -n "> "; end\n' : sh.name === 'zsh' ? '__slow() { sleep 2 }\nprecmd_functions+=(__slow)\n' : 'PROMPT_COMMAND="sleep 2"\n';
       const s = await open(shell, { rc, waitMs: 15_000 });
       await s.send('true\r', { waitMs: 3000, quietMs: 100 });
       const early = await s.send('zq', { waitMs: 500 });
-      if (sh.name === 'fish') assert.equal(early.sent, true, 'fish holds the terminal out of canonical mode for its line editor while fish_prompt runs');
-      else {
-        assert.equal(early.sent, false);
-        assert.equal(early.by, 'timeout');
-        assert.equal((await s.send('zq', { waitMs: 5000 })).sent, true);
-      }
-      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      assert.equal(early.sent, false);
+      assert.equal(early.by, 'timeout');
+      assert.equal((await s.send('zq', { waitMs: 5000 })).sent, true);
       await pendingIs(s, 'zq');
     });
 
-    test('a prompt that lost the mark at its end still takes keys once its line editor holds the terminal', { skip: sh.name === 'fish' ? 'bash and zsh: the hooks are removed by assignment' : false }, async () => {
+    test('keys sent while a prompt hook reads the terminal raw wait for the drawn prompt, so the hook does not get them', { skip: sh.name === 'fish' ? 'the hooks are bash and zsh syntax' : false }, async () => {
+      const hooks = sh.name === 'zsh'
+        ? ['__hk() { read -rsk1 -t 2 hookkey }\nprecmd_functions+=(__hk)\n', "__cq() { print -n '\\e[6n'; read -rs -d R pos; sleep 1 }\nprecmd_functions+=(__cq)\n"]
+        : ['PROMPT_COMMAND="read -rsn1 -t 2 hookkey"\n', "PROMPT_COMMAND='printf \"\\033[6n\"; IFS= read -rs -d R pos; sleep 1'\n"];
+      for (const rc of hooks) {
+        const s = await open(shell, { rc, waitMs: 15_000 });
+        await s.send('true\r', { waitMs: 3000, quietMs: 100 });
+        assert.equal((await s.send('zq', { waitMs: 6000 })).sent, true);
+        await pendingIs(s, 'zq');
+      }
+    });
+
+    test('a typed command that removes the prompt hooks and the prompt mark leaves the session running, refusing run', { skip: sh.name === 'fish' ? 'bash and zsh: the hooks are removed by assignment' : false }, async () => {
       const s = await open(shell);
-      const r = await s.send(sh.name === 'zsh' ? 'precmd_functions=(__tsm_end); PS1="> "\r' : 'PROMPT_COMMAND=__tsm_end; PS1="> "\r', { waitMs: 3000 });
-      const w = await s.wait({ kind: 'end' }, { waitMs: 5000, from: r.lines.from });
-      assert.equal(w.by, 'end');
-      assert.equal(s.front().state, 'prompt');
-      assert.deepEqual(out(s, await ran(s, 'echo after', 5000)), ['after']);
+      await s.send(sh.name === 'zsh' ? 'precmd_functions=(); PS1="> "\r' : 'PROMPT_COMMAND=; PS1="> "\r', { waitMs: 3000 });
+      const w = await s.wait({ kind: 'end' }, { waitMs: 1500, from: 0 });
+      assert.notEqual(w.by, 'end');
+      const r = await s.run('echo no', { waitMs: 1000 });
+      assert.equal(r.kind, 'refused');
+      assert.equal(r.front.state === 'running' || r.front.state === 'waiting' ? r.front.process.shell && !r.front.starting : r.front.state, true);
     });
 
     test('a command reading the terminal without echo stays running until it ends, however quiet', async () => {
