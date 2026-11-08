@@ -184,10 +184,10 @@ class LiveSession implements Session {
     const ok = nonce === expected && !this.exitInfo;
     if (kind === 'C' && ok) return this.started(at, rest[0] ? unescape(rest[0]) : undefined), true;
     if (kind === 'D' && ok) {
-      const [next, status, pipe, flags, cwd, flushed] = rest;
+      const [next, status, pipe, flags, cwd] = rest;
       const m = /^(\d+)\.(\w+)$/.exec(next ?? '');
       if (m && Number(m[1]) === this.expected.counter + 1) {
-        this.ended(at, { status: Number(status), pipe: (pipe ?? '').split(' ').filter(Boolean).map(Number), flags: flags ?? '', cwd: unescape(cwd ?? ''), flushed: unescape(flushed ?? '') });
+        this.ended(at, { status: Number(status), pipe: (pipe ?? '').split(' ').filter(Boolean).map(Number), flags: flags ?? '', cwd: unescape(cwd ?? ''), flushed: this.drained(this.expected.counter) });
         this.expected = { counter: Number(m[1]), random: m[2]! };
         this.remember(this.expected);
         return true;
@@ -208,6 +208,18 @@ class LiveSession implements Session {
     }
     if ((kind === 'C' || kind === 'D' || kind === 'B') && /^\d+\.\d+$/.test(nonce ?? '')) this.refused++;
     return false;
+  }
+
+  /** The text the prompt hook's drain read before the end mark closing nonce `counter`, from the file it wrote; the file is removed. */
+  private drained(counter: number): string {
+    const f = path.join(this.dir, `${integration.DRAINED}.${counter}`);
+    try {
+      const text = fs.readFileSync(f, 'utf8');
+      fs.rmSync(f, { force: true });
+      return text;
+    } catch {
+      return '';
+    }
   }
 
   private started(at: Pos, text: string | undefined): void {

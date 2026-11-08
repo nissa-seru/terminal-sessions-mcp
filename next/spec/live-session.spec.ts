@@ -538,10 +538,11 @@ for (const sh of shells) {
       assert.deepEqual(out(s, await ran(s, `echo ${'x'.repeat(50)}`)), ['x'.repeat(50)]);
     });
 
-    test('a line longer than the emulator\'s scrollback comes back whole', async () => {
+    test('a line longer than the emulator\'s scrollback comes back whole, as lines of at most 64 Ki characters', async () => {
       const s = await open(shell, { cols: 20 });
       const c = await ran(s, "head -c 250000 /dev/zero | tr '\\0' x; echo", 30_000);
-      assert.deepEqual(out(s, c).map((l) => l.length), [250_000]);
+      assert.deepEqual(out(s, c).map((l) => l.length), [65_536, 65_536, 65_536, 53_392]);
+      assert.equal(out(s, c).join(''), 'x'.repeat(250_000));
       assert.deepEqual(out(s, await ran(s, 'echo after')), ['after']);
     });
 
@@ -695,14 +696,6 @@ for (const sh of shells) {
       assert.deepEqual(exit, exitSeen(s));
       assert.notEqual(exit.signal, 'SIGKILL', 'the shell ended on the hangup, not on the KILL that follows a grace');
       assert.equal(fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length, before - 1);
-    });
-
-    test('a logical line longer than 64 Ki characters is kept as lines of at most that, which join to the whole', async () => {
-      const s = await open(shell);
-      const c = await ran(s, `head -c 150000 /dev/zero | tr '\\0' x; echo`, 30_000);
-      const ls = out(s, c);
-      assert.ok(ls.every((l) => l.length <= 65536), JSON.stringify(ls.map((l) => l.length)));
-      assert.equal(ls.join(''), 'x'.repeat(150_000));
     });
 
     test('text typed ahead past what the terminal holds at once is drained whole at the next prompt, and none of it runs', async () => {
