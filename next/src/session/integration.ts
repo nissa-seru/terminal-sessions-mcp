@@ -52,11 +52,7 @@ __tsm_esc() {
   __tsm_ret=$\{__tsm_ret//$'\\033'/\\\\x1b}
 }
 __tsm_drain() {
-  local __tsm_m
-  __tsm_m=$(PATH=/usr/bin:/bin:$PATH stty -g 2>/dev/null) || return 0
-  PATH=/usr/bin:/bin:$PATH stty -icanon min 0 time 0 2>/dev/null
-  PATH=/usr/bin:/bin:$PATH dd bs=65536 count=1 2>/dev/null
-  PATH=/usr/bin:/bin:$PATH stty "$__tsm_m" 2>/dev/null
+  /bin/sh @DRAIN@ 2>/dev/null
 }
 __tsm_end() {
   local __tsm_s=$? __tsm_p="$\{PIPESTATUS[*]}" __tsm_f __tsm_n __tsm_cwd __tsm_j=$-
@@ -135,11 +131,7 @@ __tsm_esc() {
   __tsm_ret=$\{__tsm_ret//$'\\e'/\\\\x1b}
 }
 __tsm_drain() {
-  local __tsm_m
-  __tsm_m=$(PATH=/usr/bin:/bin:$PATH stty -g 2>/dev/null) || return 0
-  PATH=/usr/bin:/bin:$PATH stty -icanon min 0 time 0 2>/dev/null
-  PATH=/usr/bin:/bin:$PATH dd bs=65536 count=1 2>/dev/null
-  PATH=/usr/bin:/bin:$PATH stty "$__tsm_m" 2>/dev/null
+  /bin/sh @DRAIN@ 2>/dev/null
 }
 __tsm_end() {
   local __tsm_s=$? __tsm_p="$\{(j: :)pipestatus}" __tsm_f __tsm_n __tsm_cwd
@@ -205,10 +197,7 @@ function __tsm_start --on-event fish_preexec
     printf '\\e]133;C;%s.%s;%s\\a' $__tsm_c $__tsm_r "$t"
 end
 function __tsm_drain
-    set -l m (PATH=/usr/bin:/bin:$PATH stty -g 2>/dev/null); or return 0
-    PATH=/usr/bin:/bin:$PATH stty -icanon min 0 time 0 2>/dev/null
-    PATH=/usr/bin:/bin:$PATH dd bs=65536 count=1 2>/dev/null
-    PATH=/usr/bin:/bin:$PATH stty $m 2>/dev/null
+    /bin/sh @DRAIN@ 2>/dev/null
 end
 function __tsm_d
     set -l f (begin; __tsm_drain; printf x; end | string collect -N)
@@ -258,12 +247,44 @@ __tsm_wrap
 `;
 
 const fill = (text: string, o: { nonce: Nonce; dir: string }, quote: (s: string) => string): string =>
-  text.replaceAll('@COUNTER@', String(o.nonce.counter)).replaceAll('@RANDOM@', o.nonce.random).replaceAll('@HISTFILE@', quote(path.join(o.dir, 'history')));
+  text
+    .replaceAll('@COUNTER@', String(o.nonce.counter))
+    .replaceAll('@RANDOM@', o.nonce.random)
+    .replaceAll('@HISTFILE@', quote(path.join(o.dir, 'history')))
+    .replaceAll('@DRAIN@', quote(path.join(o.dir, 'drain.sh')));
+
+/**
+ * The typeahead drain every shell's prompt hook runs, as one sh script: it prints the text typed ahead
+ * that nothing read, and leaves it unread by anything else. INT is ignored, and its stty and dd inherit
+ * that, so a C-c can't leave the terminal out of canonical mode. It reads nothing unless it could save
+ * the terminal's modes and change them. The first read waits for nothing; once it found text, each
+ * later read waits up to 0.1 s for more, until one finds none or 1 MiB is read, so text that the
+ * terminal's input queue (4 KiB on Linux) couldn't hold at once, still on its way, is drained too.
+ */
+const DRAIN = `trap '' INT
+PATH=/usr/bin:/bin:$PATH
+f=@FILE@
+m=$(stty -g 2>/dev/null) || exit 0
+stty -icanon min 0 time 0 2>/dev/null || { stty "$m" 2>/dev/null; exit 0; }
+dd bs=65536 count=1 2>/dev/null > "$f"
+if [ -s "$f" ]; then
+  stty min 0 time 1 2>/dev/null
+  while :; do
+    n=$(wc -c < "$f")
+    dd bs=65536 count=1 2>/dev/null >> "$f"
+    [ $(($(wc -c < "$f"))) -gt $((n)) ] && [ $((n)) -lt 1048576 ] || break
+  done
+fi
+stty "$m" 2>/dev/null
+if [ -s "$f" ]; then cat "$f"; fi
+rm -f "$f"
+`;
 
 /** Writes the integration's files for `shell` into `dir` and returns how to start it: the user's own startup files run first, the hooks last. */
 export function prepare(shell: string, dir: string, nonce: Nonce, env: Record<string, string>): Launch {
   const kind = shellKind(shell);
   const o = { nonce, dir };
+  if (kind !== 'none') fs.writeFileSync(path.join(dir, 'drain.sh'), DRAIN.replace('@FILE@', sq(path.join(dir, 'drained'))), { mode: 0o600 });
   if (kind === 'bash') {
     const rc = path.join(dir, 'rc.bash');
     fs.writeFileSync(rc, fill(BASH_RC, o, sq), { mode: 0o600 });
