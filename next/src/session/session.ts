@@ -18,6 +18,7 @@ const POLL_MS = 250;
 const HOOKS_QUIET_MS = 500;
 const STEP_GRACE_MS = 1500;
 const CLOSE_GRACE_MS = 2000;
+const HANGUP_EVERY_MS = 500;
 const RECENT_NONCES = 64;
 const MAX_COMMANDS = 10_000;
 /** A process exec'd in the shell's place still counts as a shell when its name is one of these. */
@@ -659,11 +660,16 @@ class LiveSession implements Session {
         for (const d of proc.descendants(this.pid) ?? []) proc.signalGroup(d.pgrp, 'SIGKILL');
         killShell();
       } else {
-        try {
-          this.p.kill('SIGHUP');
-        } catch {}
-        await this.until(mono() + CLOSE_GRACE_MS, () => this.exitInfo);
-        if (!this.exitInfo) killShell();
+        // bash can miss a SIGHUP that lands just before its line editor waits for input, until input comes.
+        const gone = (): Exit | undefined => this.exitInfo ?? this.ptyExit;
+        const grace = mono() + CLOSE_GRACE_MS;
+        for (let at = mono(); !gone() && at < grace; at += HANGUP_EVERY_MS) {
+          try {
+            this.p.kill('SIGHUP');
+          } catch {}
+          await this.until(Math.min(at + HANGUP_EVERY_MS, grace), gone);
+        }
+        if (!gone()) killShell();
       }
       await this.until(mono() + CLOSE_GRACE_MS, () => this.exitInfo);
     }

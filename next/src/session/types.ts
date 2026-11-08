@@ -224,7 +224,7 @@ export interface Session {
   wait(until: Until, opts: { waitMs: number; from: number; take?: boolean }): Promise<WaitOutcome>;
   /** Without `signal`, in steps: C-c, typed to the terminal, so it reaches whatever is in front, a shell's own loop included; then TERM, then KILL, each with a grace and each only to the job's group while it is still the shell's. With `signal`, that one step. */
   stop(signal?: NodeJS.Signals): Promise<StopOutcome>;
-  /** Hangs up the shell, then after a grace KILLs the shell alone, so the kernel hangs up the job in front as a closing terminal does, and a job detached on purpose lives on. With `force`, at once KILLs every process group the shell started, then the shell. Resolves with the exit, at once if it had exited. */
+  /** Hangs up the shell, again every 500 ms while it is there, then after a grace KILLs the shell alone, so the kernel hangs up the job in front as a closing terminal does, and a job detached on purpose lives on. With `force`, at once KILLs every process group the shell started, then the shell. Resolves with the exit, at once if it had exited. */
   close(opts?: { force?: boolean }): Promise<Exit>;
 
   /** A one-shot pattern watch from line `from` on; its id names the `match` event. */

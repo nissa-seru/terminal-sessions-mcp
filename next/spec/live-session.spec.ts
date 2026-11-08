@@ -683,6 +683,14 @@ for (const sh of shells) {
       assert.equal(fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length, before - 1);
     });
 
+    test('close hangs up again while the shell is there, so a shell that outlived the first hangup ends on a later one, not on the KILL', { skip: sh.name === 'fish' ? 'the trap is written with bash and zsh syntax' : false }, async () => {
+      // The trap takes the first hangup and restores the default. Without ignoreeof, bash's line editor returns from a trapped hangup as from end of file, and bash exits there.
+      const s = await open(shell, { rc: "set -o ignoreeof\ntrap 'trap - HUP' HUP\n" });
+      const exit = await s.close();
+      assert.deepEqual(exit, exitSeen(s));
+      assert.notEqual(exit.signal, 'SIGKILL', 'the shell ended on a hangup, not on the KILL that follows a grace');
+    });
+
     test('close of a shell that ignores the hangup KILLs the shell alone, so a job that ignores it too lives on, writing to the closed terminal', { skip: sh.name === 'fish' ? 'the hangup is ignored with bash and zsh syntax' : false }, async () => {
       const s = await open(shell, { rc: "trap '' HUP\n" });
       const c = await ran(s, '(while :; do echo tick; sleep 0.1; done) & echo "JOB:$!"');
