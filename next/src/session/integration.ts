@@ -206,7 +206,7 @@ function __tsm_drain
     PATH=/usr/bin:/bin:$PATH stty $m 2>/dev/null
 end
 function __tsm_d
-    set -l f (__tsm_drain | string collect -N)
+    set -l f (begin; __tsm_drain; printf x; end | string collect -N)
     set -l n $__tsm_c.$__tsm_r
     __tsm_next
     set -l p $argv
@@ -214,6 +214,7 @@ function __tsm_d
     set -l pj (string join ' ' -- $p)
     set -l cwd (__tsm_esc $PWD)
     set -l fl (__tsm_esc "$f")
+    set fl (string replace -r -- 'x$' '' "$fl")
     printf '\\e]133;D;%s;%s;%s;%s;;%s;%s\\a' $n $__tsm_c.$__tsm_r $argv[1] "$pj" "$cwd" "$fl"
 end
 function __tsm_post --on-event fish_postexec
