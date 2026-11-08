@@ -27,9 +27,7 @@ function findBash(): string | undefined {
     try {
       fs.accessSync(p, fs.constants.X_OK);
       if (fs.statSync(p).isFile()) return p;
-    } catch {
-      // not here
-    }
+    } catch {}
   }
   return undefined;
 }
@@ -291,7 +289,8 @@ class LiveSession implements Session {
       }
       const process: Process = { pgid: g?.pgrp ?? this.pid, argv: proc.argv(this.pid) ?? this.shellName, shell: true };
       const reads = proc.readsTerminal(this.pid, this.pts);
-      if (!this.submitted && this.withoutHooks(reads)) {
+      if ((!this.submitted || this.kind === 'none' || this.hooksLost) && this.withoutHooks(reads)) {
+        this.submitted = false;
         const open = this.running ?? this.runCommand;
         if (open) {
           this.running = this.runCommand = undefined;
@@ -325,7 +324,6 @@ class LiveSession implements Session {
     return proc.modes(this.pts)?.canonical === false;
   }
 
-  /** Text typed at this prompt: on the screen from the prompt's end to the cursor, else what `send` put there. */
   private pending(): string | undefined {
     const b = this.promptAt;
     if (!b) return this.sentPending;
@@ -364,7 +362,6 @@ class LiveSession implements Session {
     return { appCursor: this.t.appCursor };
   }
 
-  /** Resolves when `done` holds, re-checked on every change and tick, or at the deadline. */
   private until<T>(deadline: number, done: () => T | undefined): Promise<T | undefined> {
     return new Promise((resolve) => {
       let timer: NodeJS.Timeout | undefined;
@@ -520,17 +517,13 @@ class LiveSession implements Session {
         for (const d of proc.descendants(this.pid) ?? []) proc.signalGroup(d.pgrp, 'SIGKILL');
         try {
           this.p.kill('SIGKILL');
-        } catch {
-          // gone
-        }
+        } catch {}
       };
       if (opts.force) kill();
       else {
         try {
           this.p.kill('SIGHUP');
-        } catch {
-          // gone
-        }
+        } catch {}
         await this.until(Date.now() + CLOSE_GRACE_MS, () => this.exitInfo);
         if (!this.exitInfo) kill();
       }
@@ -578,9 +571,7 @@ export const openSession: OpenSession = async (o) => {
   let isDir = false;
   try {
     isDir = fs.statSync(o.cwd).isDirectory();
-  } catch {
-    // missing
-  }
+  } catch {}
   if (!isDir) throw err('invalid_argument', `cwd ${o.cwd} is not a directory`);
   try {
     fs.accessSync(o.shell, fs.constants.X_OK);

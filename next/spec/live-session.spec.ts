@@ -185,6 +185,32 @@ for (const sh of shells) {
       assert.deepEqual(out(s, k), ['before', 'after']);
     });
 
+    test('wrapped lines come back joined', async () => {
+      const s = await open(shell, { cols: 20 });
+      assert.deepEqual(out(s, await ran(s, `echo ${'x'.repeat(50)}`)), ['x'.repeat(50)]);
+    });
+
+    test('a full-screen program leaves its last frame in the transcript', async () => {
+      const s = await open(shell);
+      const c = await ran(s, `printf '\\033[?1049hFRAME-TEXT\\033[?1049l'; echo after`);
+      assert.deepEqual(out(s, c), ['FRAME-TEXT', 'after']);
+    });
+
+    test('a program asking the terminal where its cursor is gets an answer', { skip: sh.name === 'fish' ? 'the probe is bash and zsh syntax' : false }, async () => {
+      const s = await open(shell);
+      const c = await ran(s, `printf '\\033[6n'; IFS= read -rs -d R pos; echo "got$\{pos#*[}"`, 5000);
+      assert.match(out(s, c).join('\n'), /got\d+;\d+/);
+    });
+
+    test('stop with a signal takes that one step', async () => {
+      const s = await open(shell);
+      await s.run('sleep 30', { waitMs: 200 });
+      const r = await s.stop('SIGTERM');
+      assert.deepEqual(r.steps.map((x) => x.sent), ['SIGTERM']);
+      assert.equal(r.steps[0]?.to?.argv.includes('sleep'), true);
+      assert.equal(r.front.state, 'prompt');
+    });
+
     test('stop takes steps, each reported, and never signals the shell', async () => {
       const s = await open(shell);
       await s.run('sleep 30', { waitMs: 200 });
@@ -222,6 +248,15 @@ for (const sh of shells) {
       const exit = await s.close();
       assert.ok(exit.code !== undefined);
       assert.equal(fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length, before - 1);
+    });
+
+    test('close with force ends a shell whose job ignores the hangup', async () => {
+      const s = await open(shell);
+      await s.run(`bash -c 'trap "" HUP INT TERM; sleep 30'`, { waitMs: 200 });
+      const t0 = Date.now();
+      const exit = await s.close({ force: true });
+      assert.ok(Date.now() - t0 < 3000);
+      assert.ok(exit.code !== undefined || exit.signal !== undefined);
     });
   });
 }

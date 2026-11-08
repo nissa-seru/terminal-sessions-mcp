@@ -191,14 +191,12 @@ export class Transcript {
     if (marker) this.splits.push({ marker, col: b.cursorX });
   }
 
-  /** The unfrozen rows of the normal screen as logical lines, through the last row with text or the cursor's. */
   private live(): string[] {
     if (!this.normal) return [];
     const b = this.term.buffer.normal;
     return this.walk(this.firstLine(), b.baseY + Math.max(this.lastRow(), b.cursorY)).lines;
   }
 
-  /** Rows `from` through `to` as logical lines, and where a cursor at (row, x) falls in them. */
   private walk(from: number, to: number, cursor?: { row: number; x: number }): { lines: string[]; cursor?: { index: number; col: number } } {
     const b = this.term.buffer.normal;
     const lines: string[] = [];
@@ -229,7 +227,6 @@ export class Transcript {
     }
   }
 
-  /** Freezes the rows from the first unfrozen one through absolute row `upto`, short of a logical line that runs on past it. */
   private freezeThrough(upto: number): number {
     const b = this.term.buffer.normal;
     const from = this.firstLine();
@@ -249,13 +246,11 @@ export class Transcript {
     this.markRow(this.freezeThrough(b.baseY - 1) - b.baseY);
   }
 
-  /** Freezes the normal screen's rows down to screen row `last`, and returns the screen row that is next to freeze. */
   private freezeRows(last: number): number {
     const b = this.term.buffer.normal;
     return this.freezeThrough(b.baseY + last) - b.baseY;
   }
 
-  /** The next line to freeze is screen row `row`; `onRow` false when that row is about to be erased. */
   private markRow(row: number, onRow = true): void {
     const b = this.term.buffer.normal;
     this.at?.dispose();
