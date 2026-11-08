@@ -61,6 +61,16 @@ async function open(shell: string, opts: { rc?: string; files?: Record<string, s
 
 const out = (s: Session, c: Command): string[] => s.lines(c.from, c.to).lines;
 
+async function inFront(s: Session, pattern: RegExp, ms = 8000): Promise<void> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const f = s.front();
+    if ((f.state === 'running' || f.state === 'waiting') && pattern.test(f.process.argv)) return;
+    if (Date.now() > until) assert.fail(`nothing matching ${pattern} came in front: ${JSON.stringify(f)}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function ran(s: Session, text: string, waitMs = 10_000): Promise<Command> {
   const r = await s.run(text, { waitMs });
   assert.equal(r.kind, 'ended', `${text}: ${JSON.stringify(r)}`);
@@ -164,6 +174,7 @@ for (const sh of shells) {
       const s = await open(shell);
       const r = await s.run('sleep 1', { waitMs: 200 });
       assert.equal(r.kind, 'running');
+      await inFront(s, /sleep 1/);
       await s.send('echo TYPEAHEAD_RAN\r', { waitMs: 100, quietMs: 50 });
       const w = await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
       const c = w.ended.find((e) => e.id === (r as { command: Command }).command.id) ?? s.command((r as { command: Command }).command.id);
@@ -177,6 +188,7 @@ for (const sh of shells) {
       const s = await open(shell);
       const r = await s.run('sleep 2', { waitMs: 200 });
       assert.equal(r.kind, 'running');
+      await inFront(s, /sleep 2/);
       const busy = await s.run('echo SHOULD_NOT_RUN', { waitMs: 1000 });
       assert.equal(busy.kind, 'refused');
       assert.equal(busy.front.state, 'running');
@@ -208,15 +220,18 @@ for (const sh of shells) {
       assert.match(b, search);
     });
 
-    test('send types nothing when a prompt hook outlasts its wait, and the same keys go in once the prompt is drawn', async () => {
+    test('send types nothing while a prompt hook outlasts its wait with the terminal still canonical, and the same keys go in once the prompt is drawn', async () => {
       const rc = sh.name === 'fish' ? 'function fish_prompt; sleep 2; echo -n "> "; end\n' : sh.name === 'zsh' ? '__slow() { sleep 2 }\nprecmd_functions+=(__slow)\n' : 'PROMPT_COMMAND="sleep 2"\n';
       const s = await open(shell, { rc, waitMs: 15_000 });
       await s.send('true\r', { waitMs: 3000, quietMs: 100 });
       const early = await s.send('zq', { waitMs: 500 });
-      assert.equal(early.sent, false);
-      assert.equal(early.by, 'timeout');
-      const late = await s.send('zq', { waitMs: 5000 });
-      assert.equal(late.sent, true);
+      if (sh.name === 'fish') assert.equal(early.sent, true, 'fish holds the terminal out of canonical mode for its line editor while fish_prompt runs');
+      else {
+        assert.equal(early.sent, false);
+        assert.equal(early.by, 'timeout');
+        assert.equal((await s.send('zq', { waitMs: 5000 })).sent, true);
+      }
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
       const f = s.front();
       assert.equal(f.state === 'prompt' ? f.pending : f.state, 'zq');
     });
@@ -322,6 +337,7 @@ for (const sh of shells) {
     test('stop with a signal takes that one step', async () => {
       const s = await open(shell);
       await s.run('sleep 30', { waitMs: 200 });
+      await inFront(s, /sleep 30/);
       const r = await s.stop('SIGTERM');
       assert.deepEqual(r.steps.map((x) => x.sent), ['SIGTERM']);
       assert.equal(r.steps[0]?.to?.argv.includes('sleep'), true);
@@ -331,10 +347,12 @@ for (const sh of shells) {
     test('stop takes steps, each reported, and never signals the shell', async () => {
       const s = await open(shell);
       await s.run('sleep 30', { waitMs: 200 });
+      await inFront(s, /sleep 30/);
       const one = await s.stop();
       assert.deepEqual(one.steps.map((x) => x.sent), ['C-c']);
       assert.equal(one.front.state, 'prompt');
       await s.run(`bash -c 'trap "" INT TERM; sleep 30'`, { waitMs: 300 });
+      await inFront(s, /trap/);
       const hard = await s.stop();
       assert.deepEqual(hard.steps.map((x) => x.sent), ['C-c', 'SIGTERM', 'SIGKILL']);
       assert.equal(hard.front.state, 'prompt');
@@ -346,6 +364,7 @@ for (const sh of shells) {
       const rc = sh.name === 'zsh' ? `__busy() { ${busy} }\nprecmd_functions+=(__busy)\n` : `PROMPT_COMMAND='${busy}'\n`;
       const s = await open(shell, { rc, waitMs: 15_000 });
       await s.run('sleep 30', { waitMs: 300 });
+      await inFront(s, /sleep 30/);
       const r = await s.stop();
       assert.deepEqual(r.steps.map((x) => x.sent), ['C-c']);
       assert.equal(r.front.state === 'running' ? r.front.process.shell : r.front.state, true);
