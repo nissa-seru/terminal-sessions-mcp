@@ -290,8 +290,8 @@ class LiveSession implements Session {
         const pending = this.sentPending;
         return { state: 'prompt', since: this.since('prompt'), ...(pending !== undefined && { pending }) };
       }
-      if (reads) return at({ state: 'waiting', since: this.since(`w:${process.pgid}`), process, echo: proc.modes(this.pts)?.echo ?? true });
-      return at({ state: 'running', since: this.since(`r:${process.pgid}`), process, waitVisible: reads !== undefined });
+      if (reads && this.kind !== 'none') return at({ state: 'waiting', since: this.since(`w:${process.pgid}`), process, echo: proc.modes(this.pts)?.echo ?? true });
+      return at({ state: 'running', since: this.since(`r:${process.pgid}`), process, waitVisible: reads !== undefined && this.kind !== 'none' });
     }
     const members = proc.descendants(this.pid)?.filter((d) => d.pgrp === g.tpgid).map((d) => d.pid) ?? [];
     const process: Process = { pgid: g.tpgid, argv: proc.argv(g.tpgid) ?? (members[0] !== undefined ? proc.argv(members[0]) : undefined) ?? '?', shell: false };
