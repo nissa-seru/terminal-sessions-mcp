@@ -210,7 +210,7 @@ export interface Session {
 
   /** Only at a prompt with nothing pending; otherwise refused with nothing typed. */
   run(text: string, opts: { waitMs: number; take?: boolean }): Promise<RunOutcome>;
-  /** Exactly these bytes, nothing appended. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
+  /** Exactly these bytes, nothing appended. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the drawn prompt, so the line editor gets the bytes rather than the terminal. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
   send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number; take?: boolean }): Promise<SendOutcome>;
   /** `match` looks from line `from` on, so lines already there count. */
   wait(until: Until, opts: { waitMs: number; from: number; take?: boolean }): Promise<WaitOutcome>;

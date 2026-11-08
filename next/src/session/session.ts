@@ -112,8 +112,8 @@ class LiveSession implements Session {
   }
 
   async ready(waitMs: number): Promise<void> {
-    await this.until(Date.now() + waitMs, () => (this.atPrompt || this.exitInfo || (this.kind === 'none' && this.front().state === 'prompt') ? true : undefined));
-    if (!this.atPrompt && this.kind !== 'none') this.hooksLost = true;
+    await this.until(Date.now() + waitMs, () => (this.prompted || this.exitInfo || (this.kind === 'none' && this.front().state === 'prompt') ? true : undefined));
+    if (!this.prompted && this.kind !== 'none') this.hooksLost = true;
     this.opened = true;
   }
 
@@ -152,8 +152,9 @@ class LiveSession implements Session {
         return true;
       }
     }
-    if (kind === 'B' && ok && this.atPrompt) {
-      this.promptAt = at;
+    if (kind === 'B' && ok) {
+      if (this.atPrompt && !this.submitted) this.promptAt = at;
+      else this.drawnWithoutEnd(at);
       return false;
     }
     if (kind === 'C' || kind === 'D' || kind === 'B') this.refused++;
@@ -187,8 +188,8 @@ class LiveSession implements Session {
     this.sentPending = undefined;
     this.promptAt = undefined;
     if (d.cwd) this.cwdNow = d.cwd;
-    const c = this.running;
-    this.running = undefined;
+    const c = this.running ?? this.runCommand;
+    this.running = this.runCommand = undefined;
     if (c) {
       const end: Ending = { at: Date.now(), status: d.status, errexit: d.flags.includes('e'), refusedMarks: this.refused };
       if (d.pipe.length > 1) end.pipeline = d.pipe;
@@ -198,6 +199,24 @@ class LiveSession implements Session {
     }
     this.refused = 0;
     this.wake();
+  }
+
+  private drawnWithoutEnd(at: Pos): void {
+    const c = this.running ?? this.runCommand;
+    this.running = this.runCommand = undefined;
+    this.inCommand = false;
+    this.hooksLost = false;
+    this.atPrompt = true;
+    this.submitted = false;
+    this.sentPending = undefined;
+    this.promptAt = at;
+    if (c) this.finish(c, { line: at.line, col: 0 }, { at: Date.now(), errexit: false, refusedMarks: this.refused });
+    this.refused = 0;
+    this.wake();
+  }
+
+  private get prompted(): boolean {
+    return this.atPrompt && !this.submitted && this.promptAt !== undefined;
   }
 
   private finish(c: Command, at: Pos | undefined, end: Ending): void {
@@ -276,7 +295,7 @@ class LiveSession implements Session {
     const command = this.running?.id ?? this.runCommand?.id;
     const at = <T extends object>(o: T): T => (command !== undefined ? { ...o, command } : o);
     if (!g || g.tpgid === g.pgrp) {
-      if (this.atPrompt && !this.submitted) {
+      if (this.prompted) {
         const pending = this.pending();
         return { state: 'prompt', since: this.since('prompt'), ...(pending !== undefined && { pending }) };
       }
@@ -306,7 +325,7 @@ class LiveSession implements Session {
   }
 
   /**
-   * A shell with no integration, or whose hooks are gone, is at its prompt once output is quiet and
+   * A shell with no integration, or whose first prompt never came, is at its prompt once output is quiet and
    * it waits at its line editor, which holds the terminal out of canonical mode, or, with no line
    * editor (dash), reads the terminal itself. A shell whose process now runs another program (an
    * exec) is treated as one without integration.
@@ -317,7 +336,7 @@ class LiveSession implements Session {
       const now = proc.argv(this.pid);
       if (now !== undefined && now !== this.argvAtOpen) this.execed = this.hooksLost = true;
     }
-    if (this.kind !== 'none' && !this.hooksLost && !this.inCommand && !this.runCommand) return false;
+    if (!this.plain && !this.hooksLost) return false;
     if (reads) return this.plain;
     return proc.modes(this.pts)?.canonical === false;
   }
@@ -409,7 +428,8 @@ class LiveSession implements Session {
     this.p.write(cf.line);
     try {
       await this.until(deadline, () => {
-        if (c.end || this.exitInfo) return true;
+        if (this.exitInfo) return true;
+        if (c.end) return this.front().state === 'prompt' ? true : undefined;
         if (this.kind !== 'none' && Date.now() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS) return undefined;
         return this.front().state === 'waiting' || c.end ? true : undefined;
       });
@@ -428,6 +448,8 @@ class LiveSession implements Session {
     if (this.exitInfo) return { sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by: 'exited' };
     const deadline = Date.now() + opts.waitMs;
     const quiet = opts.quietMs ?? 300;
+    if (this.atPrompt && !this.submitted && this.promptAt === undefined) await this.until(deadline, () => (this.prompted || this.exitInfo || !this.atPrompt ? true : undefined));
+    if (this.exitInfo) return { sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by: 'exited' };
     if (this.atPrompt && !this.submitted) {
       if (/[\r\n]/.test(bytes)) this.submitted = true;
       else this.sentPending = (this.sentPending ?? '') + bytes;
@@ -463,7 +485,7 @@ class LiveSession implements Session {
       const r = await this.until(deadline, () => {
         if (this.exitInfo) return 'exited' as const;
         if (until.kind === 'match') return (matched = this.search(until.pattern, opts.from)) ? ('match' as const) : undefined;
-        if (this.atPrompt && !this.submitted) return until.kind === 'end' ? ('end' as const) : undefined;
+        if (this.prompted) return until.kind === 'end' ? ('end' as const) : undefined;
         if (!LINUX && this.kind !== 'none' && Date.now() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS) return undefined;
         const s = this.front().state;
         if (s === 'waiting') return 'input' as const;
