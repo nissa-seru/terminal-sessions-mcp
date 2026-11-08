@@ -59,14 +59,16 @@ __tsm_drain() {
   PATH=/usr/bin:/bin:$PATH stty "$__tsm_m" 2>/dev/null
 }
 __tsm_end() {
-  local __tsm_s=$? __tsm_p="$\{PIPESTATUS[*]}" __tsm_l __tsm_f= __tsm_n __tsm_cwd
+  local __tsm_s=$? __tsm_p="$\{PIPESTATUS[*]}" __tsm_l __tsm_f= __tsm_n __tsm_cwd __tsm_j=$-
   if [ -n "$\{__tsm_ps+x}" ]; then __tsm_p=$__tsm_ps; unset __tsm_ps; fi
   if [ "$\{BASH_VERSINFO[0]}" -ge 4 ]; then
     while builtin read -t 0 2>/dev/null; do
       if IFS= builtin read -r -t 1 __tsm_l; then __tsm_f=$__tsm_f$__tsm_l$'\\n'; else break; fi
     done
   else
+    set +m
     __tsm_f=$(__tsm_drain; builtin printf x)
+    case $__tsm_j in *m*) set -m ;; esac
     __tsm_f=$\{__tsm_f%x}
   fi
   __tsm_esc "$PWD"
