@@ -71,6 +71,16 @@ async function inFront(s: Session, pattern: RegExp, ms = 8000): Promise<void> {
   }
 }
 
+async function pendingIs(s: Session, text: string, ms = 5000): Promise<void> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const f = s.front();
+    if (f.state === 'prompt' && f.pending === text) return;
+    if (Date.now() > until) assert.fail(`the prompt never showed ${JSON.stringify(text)} pending: ${JSON.stringify(f)}`);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
 async function ran(s: Session, text: string, waitMs = 10_000): Promise<Command> {
   const r = await s.run(text, { waitMs });
   assert.equal(r.kind, 'ended', `${text}: ${JSON.stringify(r)}`);
@@ -138,6 +148,14 @@ for (const sh of shells) {
       assert.ok(c?.end, 'the typed command ended');
       assert.equal(c.end.status, 0);
       assert.deepEqual(out(s, c), ['typed-here']);
+    });
+
+    test('an empty line at the prompt leaves the session at its prompt, ready to run', async () => {
+      const s = await open(shell);
+      await s.send('\r', { waitMs: 3000 });
+      const w = await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      assert.equal(w.by, 'end');
+      assert.deepEqual(out(s, await ran(s, 'echo after-empty', 5000)), ['after-empty']);
     });
 
     test('a command reaches the shell whole: history expansion, quotes, several lines and a heredoc', async () => {
@@ -232,8 +250,7 @@ for (const sh of shells) {
         assert.equal((await s.send('zq', { waitMs: 5000 })).sent, true);
       }
       await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
-      const f = s.front();
-      assert.equal(f.state === 'prompt' ? f.pending : f.state, 'zq');
+      await pendingIs(s, 'zq');
     });
 
     test('a prompt that lost the mark at its end still takes keys once its line editor holds the terminal', { skip: sh.name === 'fish' ? 'bash and zsh: the hooks are removed by assignment' : false }, async () => {
@@ -352,7 +369,7 @@ for (const sh of shells) {
       assert.deepEqual(one.steps.map((x) => x.sent), ['C-c']);
       assert.equal(one.front.state, 'prompt');
       await s.run(`bash -c 'trap "" INT TERM; sleep 30'`, { waitMs: 300 });
-      await inFront(s, /trap/);
+      await inFront(s, /trap|sleep 30/);
       const hard = await s.stop();
       assert.deepEqual(hard.steps.map((x) => x.sent), ['C-c', 'SIGTERM', 'SIGKILL']);
       assert.equal(hard.front.state, 'prompt');

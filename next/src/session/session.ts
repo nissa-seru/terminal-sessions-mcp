@@ -155,7 +155,7 @@ class LiveSession implements Session {
     if (kind === 'B' && ok) {
       if (this.atPrompt && !this.submitted) this.promptAt = at;
       else if (this.running) this.drawnWithoutEnd(at);
-      else if (!this.runCommand) {
+      else if (!this.runCommand && (this.promptAt === undefined || at.line > this.promptAt.line)) {
         this.atPrompt = true;
         this.submitted = false;
         this.sentPending = undefined;
