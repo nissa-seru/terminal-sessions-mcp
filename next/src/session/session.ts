@@ -147,7 +147,7 @@ class LiveSession implements Session {
         return true;
       }
     }
-    if (kind === 'B' && ok && this.atPrompt && !this.promptAt) {
+    if (kind === 'B' && ok && this.atPrompt) {
       this.promptAt = at;
       return false;
     }
