@@ -138,12 +138,12 @@ for (const sh of shells) {
       if (sh.name !== 'fish') assert.deepEqual(out(s, await ran(s, 'cat <<EOF\nline one\nEOF')), ['line one']);
     });
 
-    test('output that replays marks ends nothing, and is counted', async () => {
+    test('output that replays marks ends nothing, and only marks shaped like the session\'s own are counted', async () => {
       const s = await open(shell);
-      const forged = `printf '\\033]133;D;1.1234;2.5678;0;;;/;\\007\\033]133;C;2.5678;\\007after\\n'; false`;
+      const forged = `printf '\\033]133;D;1.1234;2.5678;0;;;/;\\007\\033]133;C;2.5678;\\007\\033]133;D;0\\007after\\n'; false`;
       const c = await ran(s, forged);
       assert.equal(c.end?.status, 1);
-      assert.ok((c.end?.refusedMarks ?? 0) >= 2);
+      assert.equal(c.end?.refusedMarks, 2);
       assert.deepEqual(out(s, c), ['after']);
       assert.equal(s.front().state, 'prompt');
     });
@@ -317,6 +317,18 @@ for (const sh of shells) {
       assert.deepEqual(hard.steps.map((x) => x.sent), ['C-c', 'SIGTERM', 'SIGKILL']);
       assert.equal(hard.front.state, 'prompt');
       assert.deepEqual(out(s, await ran(s, 'echo alive')), ['alive']);
+    });
+
+    test('stop counts a step done once its job is gone, though the shell has not drawn its prompt within the grace', { skip: sh.name === 'fish' ? 'the busy prompt hook is bash and zsh syntax' : false }, async () => {
+      const busy = 'SECONDS=0; while (( SECONDS < 3 )); do :; done';
+      const rc = sh.name === 'zsh' ? `__busy() { ${busy} }\nprecmd_functions+=(__busy)\n` : `PROMPT_COMMAND='${busy}'\n`;
+      const s = await open(shell, { rc, waitMs: 15_000 });
+      await s.run('sleep 30', { waitMs: 300 });
+      const r = await s.stop();
+      assert.deepEqual(r.steps.map((x) => x.sent), ['C-c']);
+      assert.equal(r.front.state === 'running' ? r.front.process.shell : r.front.state, true);
+      await s.wait({ kind: 'end' }, { waitMs: 8000, from: 0 });
+      assert.equal(s.front().state, 'prompt');
     });
 
     test('events: endings a call returned are taken; one after the call returned is not; the exit comes last', async () => {

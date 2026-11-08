@@ -154,10 +154,17 @@ class LiveSession implements Session {
     }
     if (kind === 'B' && ok) {
       if (this.atPrompt && !this.submitted) this.promptAt = at;
-      else this.drawnWithoutEnd(at);
+      else if (this.running) this.drawnWithoutEnd(at);
+      else if (!this.runCommand) {
+        this.atPrompt = true;
+        this.submitted = false;
+        this.sentPending = undefined;
+        this.promptAt = at;
+        this.wake();
+      }
       return false;
     }
-    if (kind === 'C' || kind === 'D' || kind === 'B') this.refused++;
+    if ((kind === 'C' || kind === 'D' || kind === 'B') && /^\d+\.\d+$/.test(nonce ?? '')) this.refused++;
     return false;
   }
 
@@ -202,8 +209,8 @@ class LiveSession implements Session {
   }
 
   private drawnWithoutEnd(at: Pos): void {
-    const c = this.running ?? this.runCommand;
-    this.running = this.runCommand = undefined;
+    const c = this.running;
+    this.running = undefined;
     this.inCommand = false;
     this.hooksLost = false;
     this.atPrompt = true;
@@ -314,7 +321,7 @@ class LiveSession implements Session {
         const pending = this.sentPending;
         return { state: 'prompt', since: this.since('prompt'), ...(pending !== undefined && { pending }) };
       }
-      if (reads && !this.plain) return at({ state: 'waiting', since: this.since(`w:${process.pgid}`), process, echo: proc.modes(this.pts)?.echo ?? true });
+      if (reads && !this.plain && !this.atPrompt) return at({ state: 'waiting', since: this.since(`w:${process.pgid}`), process, echo: proc.modes(this.pts)?.echo ?? true });
       return at({ state: 'running', since: this.since(`r:${process.pgid}`), process, waitVisible: reads !== undefined && !this.plain });
     }
     const members = proc.descendants(this.pid)?.filter((d) => d.pgrp === g.tpgid).map((d) => d.pid) ?? [];
@@ -515,8 +522,13 @@ class LiveSession implements Session {
     let f = this.front();
     if (f.state === 'prompt' || f.state === 'exited') return { steps, front: f };
     const target = f.process;
-    const gone = (now: Front): boolean => now.state === 'prompt' || now.state === 'exited' || (!now.process.shell && now.process.pgid !== target.pgid);
-    const cleared = async (): Promise<Front> => (await this.until(Date.now() + STEP_GRACE_MS, () => (gone(this.front()) ? this.front() : undefined))) ?? this.front();
+    const settled = (now: Front): boolean => now.state === 'prompt' || now.state === 'exited' || (!now.process.shell && now.process.pgid !== target.pgid);
+    const gone = (now: Front): boolean => now.state === 'prompt' || now.state === 'exited' || (now.process.pgid !== target.pgid && (!now.process.shell || !proc.groupExists(target.pgid)));
+    const cleared = async (): Promise<Front> =>
+      (await this.until(Date.now() + STEP_GRACE_MS, () => {
+        const now = this.front();
+        return settled(now) ? now : undefined;
+      })) ?? this.front();
     const step = async (sent: StopStep['sent']): Promise<boolean> => {
       if (sent === 'C-c') {
         this.lastWrite = Date.now();

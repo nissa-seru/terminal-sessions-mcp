@@ -90,7 +90,7 @@ export interface Ending {
   errexit: boolean;
   /** Text typed ahead and still unread when the prompt came back, which the session discarded. */
   flushed?: string;
-  /** How many things in its output looked like end marks and were refused. */
+  /** How many marks shaped like the session's own, nonce and all, its output carried and were refused. Other programs' OSC 133 marks, such as fish 4's own, aren't counted. */
   refusedMarks: number;
 }
 
