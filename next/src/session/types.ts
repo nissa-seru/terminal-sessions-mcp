@@ -177,8 +177,10 @@ export interface StopOutcome {
 
 /**
  * Events, each emitted once. `taken` is true when a call's outcome already gave it (`run`, `send` or
- * `wait` on this session), so the host can skip the wake. `waiting` fires on each entry into that
- * state, noticed within about a quarter second; a `match` watch fires once and is gone.
+ * `wait` on this session, unless the call passed `take: false`), so the host can skip the wake.
+ * `waiting` fires on each entry into that state, noticed within about a quarter second; a `match`
+ * watch fires once and is gone. A shell that exits mid-command emits that command's `ended`, with no
+ * status, before `exited`.
  */
 export type SessionEvent =
   | { kind: 'ended'; command: Command; taken: boolean }
@@ -207,11 +209,11 @@ export interface Session {
   keyOptions(): { appCursor: boolean };
 
   /** Only at a prompt with nothing pending; otherwise refused with nothing typed. */
-  run(text: string, opts: { waitMs: number }): Promise<RunOutcome>;
+  run(text: string, opts: { waitMs: number; take?: boolean }): Promise<RunOutcome>;
   /** Exactly these bytes, nothing appended. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
-  send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number }): Promise<SendOutcome>;
+  send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number; take?: boolean }): Promise<SendOutcome>;
   /** `match` looks from line `from` on, so lines already there count. */
-  wait(until: Until, opts: { waitMs: number; from: number }): Promise<WaitOutcome>;
+  wait(until: Until, opts: { waitMs: number; from: number; take?: boolean }): Promise<WaitOutcome>;
   /** Without `signal`, in steps: C-c, then TERM, then KILL, each with a grace. With it, that one step. */
   stop(signal?: NodeJS.Signals): Promise<StopOutcome>;
   /** Hangs up the shell, then KILL after a grace, or at once with `force`. Resolves with the exit, at once if it had exited. */
