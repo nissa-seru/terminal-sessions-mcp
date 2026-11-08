@@ -13,6 +13,8 @@ const SYSCALLS: Partial<Record<string, { reads: ReadonlySet<number>; splice: num
   loong64: { reads: new Set([63, 65]), splice: 76 },
 };
 const NUMBERS = LINUX ? SYSCALLS[process.arch] : undefined;
+/** Whether the kernel here shows a process blocked reading the terminal. */
+export const READS_VISIBLE = NUMBERS !== undefined;
 /**
  * The wait channel of a terminal read with nothing to read: n_tty_read's. splice moves its input into
  * a pipe, and waits either for input or for room in the pipe; only the wait channel tells them apart.

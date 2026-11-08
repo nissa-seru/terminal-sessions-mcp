@@ -418,6 +418,11 @@ class LiveSession implements Session {
     return this.kind === 'none' || this.execed;
   }
 
+  /** Whether the kernel can tell a call's loop more than the marks do: a wait for input where reads show, a prompt where there are no marks. Elsewhere (macOS) reading it on every tick only costs spawns. */
+  private get kernelSays(): boolean {
+    return proc.READS_VISIBLE || this.plain;
+  }
+
   /** The prompt's text after its end mark; until output that came after the last `send` here is parsed, what that sent. */
   private pending(): string | undefined {
     const b = this.promptAt;
@@ -507,8 +512,8 @@ class LiveSession implements Session {
     try {
       await this.until(deadline, () => {
         if (this.exitInfo) return true;
-        if (c.end) return this.front().state === 'prompt' ? true : undefined;
-        if (this.kind !== 'none' && mono() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS) return undefined;
+        if (c.end) return this.prompted || (this.plain && this.front().state === 'prompt') ? true : undefined;
+        if (!this.kernelSays || (this.kind !== 'none' && mono() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS)) return undefined;
         return this.front().state === 'waiting' || c.end ? true : undefined;
       });
       await this.t.settled();
@@ -571,7 +576,7 @@ class LiveSession implements Session {
         if (this.exitInfo) return 'exited' as const;
         if (until.kind === 'match') return (matched = this.scan(until.pattern, scan)) ? ('match' as const) : undefined;
         if (this.prompted) return until.kind === 'end' ? ('end' as const) : undefined;
-        if (!LINUX && this.kind !== 'none' && mono() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS) return undefined;
+        if (!this.kernelSays) return undefined;
         const s = this.front().state;
         if (s === 'waiting') return 'input' as const;
         return until.kind === 'end' && s === 'prompt' ? ('end' as const) : undefined;

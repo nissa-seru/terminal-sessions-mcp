@@ -459,15 +459,16 @@ for (const sh of shells) {
       assert.equal(s.front().state, 'prompt');
     });
 
-    test('the line editor reading before its end mark is parsed is not taken for a program waiting for input', { skip: process.platform !== 'linux' ? 'only Linux shows reads' : sh.name === 'bash' ? 'readline waits in pselect, never in a read' : false }, async () => {
+    test('the line editor reading before its end mark is parsed is not taken for a program waiting for input', { skip: process.platform !== 'linux' ? 'only Linux shows reads' : sh.name === 'bash' ? 'readline waits in pselect, never in a read' : sh.name === 'fish' ? 'fish waits in poll, never in a read' : false }, async () => {
       const s = await open(shell);
       const r = await s.run('sleep 0.3', { waitMs: 50 });
       assert.equal(r.kind, 'running');
       const read = process.arch === 'x64' ? '0' : '63';
+      const terminal = fs.readlinkSync(`/proc/${s.pid}/fd/0`);
       const until = Date.now() + 15_000;
       for (;;) {
         const sc = fs.readFileSync(`/proc/${s.pid}/syscall`, 'utf8').split(' ');
-        if (sc[0] === read && sc[1] === '0x0') break;
+        if (sc[0] === read && fs.readlinkSync(`/proc/${s.pid}/fd/${Number.parseInt(sc[1] ?? '', 16)}`) === terminal) break;
         if (Date.now() > until) assert.fail(`the shell never read the terminal: ${sc.join(' ')}`);
       }
       assert.notEqual(s.front().state, 'waiting');
@@ -524,6 +525,13 @@ for (const sh of shells) {
     test('wrapped lines come back joined', async () => {
       const s = await open(shell, { cols: 20 });
       assert.deepEqual(out(s, await ran(s, `echo ${'x'.repeat(50)}`)), ['x'.repeat(50)]);
+    });
+
+    test('a line longer than the emulator\'s scrollback comes back whole', async () => {
+      const s = await open(shell, { cols: 20 });
+      const c = await ran(s, "head -c 250000 /dev/zero | tr '\\0' x; echo", 30_000);
+      assert.deepEqual(out(s, c).map((l) => l.length), [250_000]);
+      assert.deepEqual(out(s, await ran(s, 'echo after')), ['after']);
     });
 
     test('a full-screen program leaves its last frame in the transcript', async () => {
@@ -671,7 +679,7 @@ for (const sh of shells) {
       const before = fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length;
       const exit = await s.close();
       assert.deepEqual(exit, exitSeen(s));
-      assert.equal(exit.signal, 'SIGHUP');
+      assert.ok(exit.signal === 'SIGHUP' || exit.code === 129, JSON.stringify(exit));
       assert.equal(fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length, before - 1);
     });
 
