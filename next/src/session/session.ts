@@ -66,7 +66,6 @@ class LiveSession implements Session {
   private frontKey = '';
   private frontSince = Date.now();
   private waitingKey = '';
-  private readonly fgAtArrival: boolean[] = [];
   private readonly calls = new Set<Call>();
   private readonly wakers = new Set<() => void>();
   private readonly watches = new Map<number, { pattern: RegExp; from: number }>();
@@ -99,9 +98,7 @@ class LiveSession implements Session {
     });
     p.onData((d) => {
       this.lastOutput = Date.now();
-      if (LINUX) this.fgAtArrival.push(this.shellInFront());
       this.t.write(d, () => {
-        if (LINUX) this.fgAtArrival.shift();
         this.checkWatches();
         this.wake();
       });
@@ -134,16 +131,11 @@ class LiveSession implements Session {
     return s;
   }
 
-  private shellInFront(): boolean {
-    const g = proc.groups(this.pid);
-    return !!g && g.tpgid === g.pgrp;
-  }
-
   private mark(payload: string, at: Pos): boolean {
     const [kind, nonce, ...rest] = payload.split(';');
     const expected = integration.nonceText(this.expected);
     if (kind === 'C' && nonce === expected && this.inCommand) return false;
-    const ok = nonce === expected && !this.exitInfo && (LINUX ? (this.fgAtArrival[0] ?? this.shellInFront()) : this.shellInFront());
+    const ok = nonce === expected && !this.exitInfo;
     if (kind === 'C' && ok) return this.started(at, rest[0] ? unescape(rest[0]) : undefined), true;
     if (kind === 'D' && ok) {
       const [next, status, pipe, flags, cwd, flushed] = rest;

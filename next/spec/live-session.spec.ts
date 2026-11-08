@@ -26,6 +26,12 @@ after(async () => {
   for (const s of sessions) await s.close({ force: true });
 });
 
+const bashBelow = (shell: string, major: number, minor: number): boolean => {
+  if (path.basename(shell) !== 'bash') return false;
+  const [a, b] = execFileSync(shell, ['-c', 'echo "$\{BASH_VERSINFO[0]} $\{BASH_VERSINFO[1]}"'], { encoding: 'utf8' }).trim().split(' ').map(Number);
+  return a! < major || (a === major && b! < minor);
+};
+
 const STARTUP: Record<string, string> = { bash: '.bash_profile', zsh: '.zshrc', fish: '.config/fish/config.fish' };
 
 async function open(shell: string, opts: { rc?: string; cwd?: string; cols?: number; waitMs?: number } = {}): Promise<Session> {
@@ -99,7 +105,7 @@ for (const sh of shells) {
       assert.deepEqual(out(s, bare), ['abc']);
     });
 
-    test('a command typed with send gets an id and a status too', async () => {
+    test('a command typed with send gets an id and a status too', { skip: bashBelow(shell, 4, 4) ? 'bash before 4.4 has no PS0' : false }, async () => {
       const s = await open(shell);
       const r = await s.send('echo typed-here\r', { waitMs: 5000, until: /typed-here$/ });
       const w = await s.wait({ kind: 'end' }, { waitMs: 5000, from: r.lines.from });
@@ -133,7 +139,7 @@ for (const sh of shells) {
       assert.deepEqual(out(s, c), ['[[redacted]]']);
     });
 
-    test('a line typed ahead of a program that never read it is discarded at the prompt and reported', { skip: sh.name === 'fish' ? 'fish has no timed read to flush with' : false }, async () => {
+    test('a line typed ahead of a program that never read it is discarded at the prompt and reported', { skip: sh.name === 'fish' || bashBelow(shell, 4, 0) ? 'fish and bash before 4 have no timed read to flush with' : false }, async () => {
       const s = await open(shell);
       const r = await s.run('sleep 1', { waitMs: 200 });
       assert.equal(r.kind, 'running');
@@ -204,13 +210,13 @@ for (const sh of shells) {
 
     test('a full-screen program leaves its last frame in the transcript', async () => {
       const s = await open(shell);
-      const c = await ran(s, `printf '\\033[?1049hFRAME-TEXT\\033[?1049l'; echo after`);
+      const c = await ran(s, `printf '\\033[?1049h\\033[HFRAME-TEXT\\033[?1049l'; echo after`);
       assert.deepEqual(out(s, c), ['FRAME-TEXT', 'after']);
     });
 
     test('a program asking the terminal where its cursor is gets an answer', { skip: sh.name === 'fish' ? 'the probe is bash and zsh syntax' : false }, async () => {
       const s = await open(shell);
-      const c = await ran(s, `printf '\\033[6n'; IFS= read -rs -d R pos; echo "got$\{pos#*[}"`, 5000);
+      const c = await ran(s, `printf '\\033[6n'; IFS= read -rs -d R pos; echo "got$\{pos#*\\[}"`, 5000);
       assert.match(out(s, c).join('\n'), /got\d+;\d+/);
     });
 

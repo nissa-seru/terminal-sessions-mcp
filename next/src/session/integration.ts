@@ -112,6 +112,7 @@ ${ZSH_FORWARD('.zshenv', false)}`;
 const ZSH_HOOKS = `if (( $\{+__tsm_uzd} )); then ZDOTDIR=$__tsm_uzd; else unset ZDOTDIR; fi
 unset __tsm_uzd
 HISTFILE=@HISTFILE@
+unsetopt PROMPT_SP PROMPT_CR
 typeset -g __tsm_c=@COUNTER@ __tsm_r=@RANDOM@ __tsm_ret __tsm_bs=
 __tsm_next() {
   __tsm_c=$((__tsm_c + 1))
@@ -181,14 +182,17 @@ function __tsm_setst
     return $argv[1]
 end
 function __tsm_start --on-event fish_preexec
-    printf '\\e]133;C;%s.%s;%s\\a' $__tsm_c $__tsm_r (__tsm_esc $argv[1])
+    set -l t (__tsm_esc $argv[1])
+    printf '\\e]133;C;%s.%s;%s\\a' $__tsm_c $__tsm_r "$t"
 end
 function __tsm_d
     set -l n $__tsm_c.$__tsm_r
     __tsm_next
     set -l p $argv
     set -e p[1]
-    printf '\\e]133;D;%s;%s;%s;%s;;%s;\\a' $n $__tsm_c.$__tsm_r $argv[1] (string join ' ' -- $p) (__tsm_esc $PWD)
+    set -l pj (string join ' ' -- $p)
+    set -l cwd (__tsm_esc $PWD)
+    printf '\\e]133;D;%s;%s;%s;%s;;%s;\\a' $n $__tsm_c.$__tsm_r $argv[1] "$pj" "$cwd"
 end
 function __tsm_post --on-event fish_postexec
     set -l x $pipestatus $status
