@@ -8,7 +8,6 @@ import { openSession } from '../src/session/session.js';
 import type { Command, Session, SessionEvent } from '../src/session/types.js';
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-session-')));
-after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
 const which = (name: string): string | undefined => {
   try {
@@ -24,6 +23,7 @@ let homes = 0;
 const sessions: Session[] = [];
 after(async () => {
   for (const s of sessions) await s.close({ force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5 });
 });
 
 const bashBelow = (shell: string, major: number, minor: number): boolean => {
