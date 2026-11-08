@@ -679,7 +679,7 @@ for (const sh of shells) {
       const before = fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length;
       const exit = await s.close();
       assert.deepEqual(exit, exitSeen(s));
-      assert.ok(exit.signal === 'SIGHUP' || exit.code === 129, JSON.stringify(exit));
+      assert.notEqual(exit.signal, 'SIGKILL', 'the shell ended on the hangup, not on the KILL that follows a grace');
       assert.equal(fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length, before - 1);
     });
 

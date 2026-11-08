@@ -259,6 +259,9 @@ export class Transcript {
   }
 
   private push(text: string): void {
+    // V8 keeps a string built by appending, as the emulator builds a row's text, as a rope of its pieces
+    // until a character of it is read; reading one flattens it, about a tenth of the memory.
+    text.charCodeAt(0);
     this.frozen.push(text);
     if (this.frozen.length > this.maxLines + 1000) {
       const n = this.frozen.length - this.maxLines;
