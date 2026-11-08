@@ -28,10 +28,11 @@ after(async () => {
 
 const STARTUP: Record<string, string> = { bash: '.bash_profile', zsh: '.zshrc', fish: '.config/fish/config.fish' };
 
-async function open(shell: string, opts: { rc?: string; cwd?: string; cols?: number } = {}): Promise<Session> {
+async function open(shell: string, opts: { rc?: string; cwd?: string; cols?: number; waitMs?: number } = {}): Promise<Session> {
   const home = path.join(tmp, `home-${++homes}`);
   fs.mkdirSync(home);
   const name = path.basename(shell);
+  if (name === 'zsh') fs.writeFileSync(path.join(home, '.zshenv'), 'skip_global_compinit=1\n');
   if (opts.rc !== undefined && STARTUP[name]) {
     fs.mkdirSync(path.dirname(path.join(home, STARTUP[name]!)), { recursive: true });
     fs.writeFileSync(path.join(home, STARTUP[name]!), opts.rc);
@@ -45,7 +46,7 @@ async function open(shell: string, opts: { rc?: string; cwd?: string; cols?: num
     env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TERM: 'xterm-256color', LANG: 'C.UTF-8' },
     parent: tmp,
     nextCommandId: () => ++ids,
-    waitMs: 10_000,
+    waitMs: opts.waitMs ?? 10_000,
   });
   sessions.push(s);
   return s;
@@ -70,6 +71,17 @@ for (const sh of shells) {
       const c = await ran(s, 'echo $FROM_RC');
       assert.deepEqual(out(s, c), ['yes']);
       assert.equal(c.end?.status, 0);
+    });
+
+    test('a startup file that asks a question holds the session until it is answered', { skip: sh.name === 'fish' ? 'fish config has no prompt read here' : false }, async () => {
+      const s = await open(shell, { rc: 'read ANSWER\nexport ANSWER\n', waitMs: 1500 });
+      const f = s.front();
+      assert.notEqual(f.state, 'prompt');
+      if (process.platform === 'linux') assert.equal(f.state, 'waiting');
+      await s.send('given\r', { waitMs: 3000 });
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      assert.equal(s.front().state, 'prompt');
+      assert.deepEqual(out(s, await ran(s, 'echo $ANSWER')), ['given']);
     });
 
     test('gives each command its status, pipeline, directory and output, without the prompt or the typed line', async () => {

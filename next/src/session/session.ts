@@ -99,9 +99,9 @@ class LiveSession implements Session {
     });
     p.onData((d) => {
       this.lastOutput = Date.now();
-      this.fgAtArrival.push(this.shellInFront());
+      if (LINUX) this.fgAtArrival.push(this.shellInFront());
       this.t.write(d, () => {
-        this.fgAtArrival.shift();
+        if (LINUX) this.fgAtArrival.shift();
         this.checkWatches();
         this.wake();
       });
@@ -135,19 +135,15 @@ class LiveSession implements Session {
   }
 
   private shellInFront(): boolean {
-    if (LINUX) {
-      const g = proc.groups(this.pid);
-      return !!g && g.tpgid === g.pgrp;
-    }
-    return this.p.process === this.shellName;
+    const g = proc.groups(this.pid);
+    return !!g && g.tpgid === g.pgrp;
   }
 
   private mark(payload: string, at: Pos): boolean {
     const [kind, nonce, ...rest] = payload.split(';');
     const expected = integration.nonceText(this.expected);
-    const fg = this.fgAtArrival[0] ?? this.shellInFront();
     if (kind === 'C' && nonce === expected && this.inCommand) return false;
-    const ok = fg && nonce === expected && !this.exitInfo;
+    const ok = nonce === expected && !this.exitInfo && (LINUX ? (this.fgAtArrival[0] ?? this.shellInFront()) : this.shellInFront());
     if (kind === 'C' && ok) return this.started(at, rest[0] ? unescape(rest[0]) : undefined), true;
     if (kind === 'D' && ok) {
       const [next, status, pipe, flags, cwd, flushed] = rest;
@@ -320,7 +316,7 @@ class LiveSession implements Session {
   private withoutHooks(reads: boolean | undefined): boolean {
     if (this.atPrompt || Date.now() - this.lastOutput < HOOKS_QUIET_MS) return false;
     if (this.kind !== 'none' && !this.hooksLost && !this.inCommand && !this.runCommand) return false;
-    if (this.kind === 'none' && reads) return true;
+    if (reads) return this.kind === 'none';
     return proc.modes(this.pts)?.canonical === false;
   }
 

@@ -183,13 +183,24 @@ end
 function __tsm_start --on-event fish_preexec
     printf '\\e]133;C;%s.%s;%s\\a' $__tsm_c $__tsm_r (__tsm_esc $argv[1])
 end
+function __tsm_d
+    set -l n $__tsm_c.$__tsm_r
+    __tsm_next
+    set -l p $argv
+    set -e p[1]
+    printf '\\e]133;D;%s;%s;%s;%s;;%s;\\a' $n $__tsm_c.$__tsm_r $argv[1] (string join ' ' -- $p) (__tsm_esc $PWD)
+end
 function __tsm_post --on-event fish_postexec
     set -l x $pipestatus $status
     if set -q __tsm_fps
         set x $__tsm_fps
         set -e __tsm_fps
     end
-    set -g __tsm_pst $x
+    set -l p
+    if test (count $x) -gt 2
+        set p $x[1..-2]
+    end
+    __tsm_d $x[-1] $p
 end
 function __tsm_wrap
     if not string match -q '*__tsm_prompt_end*' -- (functions fish_prompt | string collect)
@@ -205,16 +216,10 @@ function __tsm_prompt_end
     printf '\\e]133;B;%s.%s\\a' $__tsm_c $__tsm_r
 end
 function __tsm_end --on-event fish_prompt
-    set -l s 0
-    set -l p
-    if set -q __tsm_pst
-        set s $__tsm_pst[-1]
-        set p $__tsm_pst[1..-2]
-        set -e __tsm_pst
+    if not set -q __tsm_up
+        set -g __tsm_up 1
+        __tsm_d 0
     end
-    set -l n $__tsm_c.$__tsm_r
-    __tsm_next
-    printf '\\e]133;D;%s;%s;%s;%s;;%s;\\a' $n $__tsm_c.$__tsm_r $s (string join ' ' -- $p) (__tsm_esc $PWD)
     __tsm_wrap
 end
 __tsm_wrap
