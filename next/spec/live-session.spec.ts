@@ -260,6 +260,19 @@ for (const sh of shells) {
       assert.equal(s.front().state, 'exited');
     });
 
+    test('a shell replaced by exec keeps working, without statuses', async () => {
+      const s = await open(shell);
+      const r = await s.run('exec /bin/sh', { waitMs: 8000 });
+      assert.equal(r.kind, 'ended');
+      assert.equal(r.kind === 'ended' ? r.command.end?.status : 'x', undefined);
+      const after = await s.run('echo after-exec', { waitMs: 8000 });
+      assert.equal(after.kind, 'ended');
+      if (after.kind === 'ended') {
+        assert.deepEqual(out(s, after.command), ['after-exec']);
+        assert.equal(after.command.end?.status, undefined);
+      }
+    });
+
     test('close hangs up the shell and removes its directory', async () => {
       const s = await open(shell);
       const before = fs.readdirSync(tmp).filter((d) => d.startsWith('s-')).length;
