@@ -223,7 +223,8 @@ class LiveSession implements Session {
   }
 
   private get prompted(): boolean {
-    return this.atPrompt && !this.submitted && this.promptAt !== undefined;
+    if (!this.atPrompt || this.submitted) return false;
+    return this.promptAt !== undefined || proc.modes(this.pts)?.canonical === false;
   }
 
   private finish(c: Command, at: Pos | undefined, end: Ending): void {
@@ -455,7 +456,10 @@ class LiveSession implements Session {
     if (this.exitInfo) return { sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by: 'exited' };
     const deadline = Date.now() + opts.waitMs;
     const quiet = opts.quietMs ?? 300;
-    if (this.atPrompt && !this.submitted && this.promptAt === undefined) await this.until(deadline, () => (this.prompted || this.exitInfo || !this.atPrompt ? true : undefined));
+    if (this.atPrompt && !this.submitted && !this.prompted) {
+      await this.until(deadline, () => (this.prompted || this.exitInfo || !this.atPrompt ? true : undefined));
+      if (!this.exitInfo && this.atPrompt && !this.prompted) return { sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by: 'timeout' };
+    }
     if (this.exitInfo) return { sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by: 'exited' };
     if (this.atPrompt && !this.submitted) {
       if (/[\r\n]/.test(bytes)) this.submitted = true;

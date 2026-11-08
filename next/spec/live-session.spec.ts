@@ -208,6 +208,28 @@ for (const sh of shells) {
       assert.match(b, search);
     });
 
+    test('send types nothing when a prompt hook outlasts its wait, and the same keys go in once the prompt is drawn', async () => {
+      const rc = sh.name === 'fish' ? 'function fish_prompt; sleep 2; echo -n "> "; end\n' : sh.name === 'zsh' ? '__slow() { sleep 2 }\nprecmd_functions+=(__slow)\n' : 'PROMPT_COMMAND="sleep 2"\n';
+      const s = await open(shell, { rc, waitMs: 15_000 });
+      await s.send('true\r', { waitMs: 3000, quietMs: 100 });
+      const early = await s.send('zq', { waitMs: 500 });
+      assert.equal(early.sent, false);
+      assert.equal(early.by, 'timeout');
+      const late = await s.send('zq', { waitMs: 5000 });
+      assert.equal(late.sent, true);
+      const f = s.front();
+      assert.equal(f.state === 'prompt' ? f.pending : f.state, 'zq');
+    });
+
+    test('a prompt that lost the mark at its end still takes keys once its line editor holds the terminal', { skip: sh.name === 'fish' ? 'bash and zsh: the hooks are removed by assignment' : false }, async () => {
+      const s = await open(shell);
+      const r = await s.send(sh.name === 'zsh' ? 'precmd_functions=(__tsm_end); PS1="> "\r' : 'PROMPT_COMMAND=__tsm_end; PS1="> "\r', { waitMs: 3000 });
+      const w = await s.wait({ kind: 'end' }, { waitMs: 5000, from: r.lines.from });
+      assert.equal(w.by, 'end');
+      assert.equal(s.front().state, 'prompt');
+      assert.deepEqual(out(s, await ran(s, 'echo after', 5000)), ['after']);
+    });
+
     test('a command reading the terminal without echo stays running until it ends, however quiet', async () => {
       const s = await open(shell);
       const read = sh.name === 'zsh' ? 'read -rsk1 a' : sh.name === 'fish' ? 'read -s -n1 a' : 'read -rsn1 a';

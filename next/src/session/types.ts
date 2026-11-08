@@ -136,7 +136,7 @@ export type RunOutcome =
   | { kind: 'running'; command: Command; front: Front };
 
 export interface SendOutcome {
-  /** false when the shell had exited, and nothing was sent. */
+  /** false when nothing was sent: the shell had exited (`by: 'exited'`), or a prompt whose end mark came wasn't drawn within the wait (`by: 'timeout'`). */
   sent: boolean;
   /** From the line the cursor was on when the text went in. */
   lines: Lines;
@@ -210,7 +210,7 @@ export interface Session {
 
   /** Only at a prompt with nothing pending; otherwise refused with nothing typed. */
   run(text: string, opts: { waitMs: number; take?: boolean }): Promise<RunOutcome>;
-  /** Exactly these bytes, nothing appended. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the drawn prompt, so the line editor gets the bytes rather than the terminal. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
+  /** Exactly these bytes, nothing appended. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the drawn prompt, so the line editor gets the bytes rather than the terminal, and sends nothing if the wait runs out. Drawn means the mark at the prompt's end came, or the terminal is out of canonical mode, which a line editor holding it does. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
   send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number; take?: boolean }): Promise<SendOutcome>;
   /** `match` looks from line `from` on, so lines already there count. */
   wait(until: Until, opts: { waitMs: number; from: number; take?: boolean }): Promise<WaitOutcome>;
