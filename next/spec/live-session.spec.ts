@@ -36,7 +36,7 @@ const bashBelow = (shell: string, major: number, minor: number): boolean => {
 
 const STARTUP: Record<string, string> = { bash: '.bash_profile', zsh: '.zshrc', fish: '.config/fish/config.fish' };
 
-async function open(shell: string, opts: { rc?: string; files?: Record<string, string>; cwd?: string; cols?: number; waitMs?: number } = {}): Promise<Session> {
+async function open(shell: string, opts: { rc?: string; files?: Record<string, string>; cwd?: string; cols?: number; waitMs?: number; log?: (line: string) => void } = {}): Promise<Session> {
   const home = path.join(tmp, `home-${++homes}`);
   fs.mkdirSync(home);
   const name = path.basename(shell);
@@ -60,6 +60,7 @@ async function open(shell: string, opts: { rc?: string; files?: Record<string, s
     parent: tmp,
     nextCommandId: () => ++ids,
     waitMs: opts.waitMs ?? 10_000,
+    ...(opts.log ? { log: opts.log } : {}),
   });
   sessions.push(s);
   return s;
@@ -79,6 +80,14 @@ const pidOf = (s: Session, c: Command, tag: string): number => {
   const pid = Number(new RegExp(`^${tag}:(\\d+)$`).exec(out(s, c).find((l) => l.startsWith(`${tag}:`)) ?? '')?.[1]);
   assert.ok(pid > 0, `${tag} in ${JSON.stringify(out(s, c))}`);
   return pid;
+};
+/** Whether `pid` is stopped. */
+const isStopped = (pid: number): boolean => {
+  try {
+    return execFileSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' }).trim().startsWith('T');
+  } catch {
+    return false;
+  }
 };
 /** KILLs `pid` if it's still there, to clean up after a test. */
 const killPid = (pid: number): void => {
@@ -988,6 +997,39 @@ for (const sh of shells) {
         assert.equal(gone(left), false, 'the process that left the terminal lives on');
       } finally {
         for (const pid of [left, nohup, stopped, disowned]) killPid(pid);
+      }
+    });
+
+    test('close continues a stopped job it hangs up, which the kernel leaves stopped while its parent lives on in another group', { skip: sh.name !== 'bash' ? 'close lists the same way in every shell' : false }, async () => {
+      // The parent ignores the hangup and lives on, so the child's group isn't orphaned, and the kernel neither hangs it up nor continues it.
+      const script = path.join(tmp, `stopped-${++gates}.py`);
+      const file = path.join(tmp, `pid-${gates}`);
+      fs.writeFileSync(script, ['import os, signal, sys, time', 'pid = os.fork()', 'if pid == 0:', '    signal.signal(signal.SIGHUP, signal.SIG_DFL)', '    os.setpgid(0, 0)', '    os.kill(os.getpid(), signal.SIGSTOP)', '    time.sleep(300)', '    os._exit(0)', 'open(sys.argv[1], "w").write(str(pid))', 'time.sleep(300)', ''].join('\n'));
+      const s = await open(shell);
+      const parent = pidOf(s, await ran(s, `nohup python3 '${script}' '${file}' >/dev/null 2>&1 & echo "JOB:$!"`), 'JOB');
+      const child = await eventually('the child wrote its pid', () => (fs.existsSync(file) && Number(fs.readFileSync(file, 'utf8'))) || undefined);
+      try {
+        await eventually('the child is stopped', () => isStopped(child));
+        await s.close();
+        await eventually('the stopped child is gone', () => gone(child));
+      } finally {
+        for (const pid of [child, parent]) killPid(pid);
+      }
+    });
+
+    test('a session directory close cannot remove is logged, and close still resolves with the exit', { skip: sh.name !== 'bash' ? 'close removes its directory the same way in every shell' : false }, async () => {
+      const logged: string[] = [];
+      const s = await open(shell, { log: (line) => logged.push(line) });
+      const dir = out(s, await ran(s, 'd=$(dirname "$HISTFILE"); mkdir "$d/ro" && : > "$d/ro/f" && chmod 555 "$d/ro" && echo "DIR:$d"')).find((l) => l.startsWith('DIR:'))!.slice(4);
+      assert.ok(fs.existsSync(path.join(dir, 'ro', 'f')));
+      try {
+        const exit = await s.close();
+        assert.deepEqual(exit, exitSeen(s));
+        assert.equal(logged.length, 1, JSON.stringify(logged));
+        assert.match(logged[0]!, /closed, but its directory .* wasn't removed: /);
+      } finally {
+        fs.chmodSync(path.join(dir, 'ro'), 0o755);
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     });
 
