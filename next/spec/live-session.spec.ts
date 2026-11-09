@@ -1331,7 +1331,8 @@ for (const sh of shells) {
       assert.match(out(s, t).join('\n'), /^a!b\|~x\|tab +here\ntwo$/);
       const e = await s.run('exit', { waitMs: 10_000 });
       assert.equal(e.kind, 'ended', JSON.stringify(e));
-      assert.equal(e.kind === 'ended' ? e.command.end?.status : 'x', undefined);
+      // fish runs its postexec handlers for exit, so its end mark comes; bash and zsh exit first, and the command ends with no status.
+      assert.equal(e.kind === 'ended' ? e.command.end?.status : 'x', sh.name === 'fish' ? 0 : undefined);
       await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
       const f = s.front();
       assert.equal(f.state, 'prompt');
@@ -1344,11 +1345,14 @@ for (const sh of shells) {
       const s = await open(shell);
       const home = lastHome();
       const file = sh.name === 'fish' ? path.join(home, 'far-data', 'fish', 'fish_history') : path.join(home, 'far-history');
-      const env: Record<string, string> = sh.name === 'fish' ? { XDG_DATA_HOME: path.join(home, 'far-data') } : sh.name === 'bash' ? { HISTFILE: file, PROMPT_COMMAND: 'history -a' } : { HISTFILE: file };
+      const env: Record<string, string> = sh.name === 'fish' ? { XDG_DATA_HOME: path.join(home, 'far-data') } : sh.name === 'bash' ? { HISTFILE: file, PROMPT_COMMAND: 'history -a' } : { HISTFILE: file, SAVEHIST: '1000', HISTSIZE: '1000' };
       await reachFar(s, shell, env, sh.name === 'zsh' ? ['-o', 'incappendhistory'] : []);
       const typed = await s.send('echo before-integrate\r', { waitMs: 5000, until: /^before-integrate$/ });
       assert.equal(typed.by, 'match');
       await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 5000, from: typed.matched!.line });
+      // fish writes its history file at exit, or when asked.
+      if (sh.name === 'fish') await s.send('history save\r', { waitMs: 5000, quietMs: 300 });
+      await eventually('the far shell saves what was typed before', () => fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes('before-integrate'));
       const r = await s.integrate({ waitMs: 10_000 });
       assert.equal(r.kind, 'integrated', JSON.stringify(r));
       assert.deepEqual(out(s, await ran(s, 'echo after-integrate')), ['after-integrate']);
@@ -1445,7 +1449,8 @@ for (const sh of shells) {
       const hold = await s.run('sleep 300', { waitMs: 300 });
       assert.equal(hold.kind, 'running');
       const relay = outer.state === 'prompt' ? outer.within!.pgid : 0;
-      process.kill(-relay, 'SIGKILL');
+      // TERM, as a dropped connection ends ssh: the relay puts the terminal back as it found it. A KILLed one leaves it raw.
+      process.kill(-relay, 'SIGTERM');
       await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
       const f = s.front();
       assert.equal(f.state, 'prompt');
