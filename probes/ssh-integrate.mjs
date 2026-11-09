@@ -51,7 +51,7 @@ for (const far of ['bash', 'zsh', 'fish']) {
     const sig = await s.stop('SIGTERM');
     console.log(`  stop SIGTERM there: within ${sig.within}; steps ${sig.steps.length}`);
     const st = await s.stop();
-    console.log(`  stop: steps ${j(st.steps.map((x) => ({ step: x.step ?? x.kind ?? x.signal, ended: x.ended })))}; front ${front(st.front)}`);
+    console.log(`  stop: steps ${j(st.steps.map((x) => ({ sent: x.sent, state: x.front.state, within: x.front.within })))}; within ${st.within}; front ${front(st.front)}`);
     await sleep(500);
     const c5 = r5.command;
     console.log(`  sleep's ending: status ${c5?.end?.status}`);
