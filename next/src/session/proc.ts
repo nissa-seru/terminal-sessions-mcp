@@ -54,7 +54,7 @@ function psSync(args: string[], timeoutMs: number): Spawned {
   }
 }
 
-function psAsync(args: string[], timeoutMs: number): Promise<Spawned> {
+function psAsync(args: string[], deadline: number): Promise<Spawned> {
   return new Promise((resolve) => {
     let timer: NodeJS.Timeout | undefined;
     let settled = false;
@@ -76,7 +76,7 @@ function psAsync(args: string[], timeoutMs: number): Promise<Spawned> {
       child.stdout?.destroy();
       child.stderr?.destroy();
       settle({ status: null, stdout: '', timedOut: true });
-    }, timeoutMs);
+    }, Math.max(0, deadline - performance.now()));
   });
 }
 
@@ -84,7 +84,7 @@ function psAsync(args: string[], timeoutMs: number): Promise<Spawned> {
 async function psWithin(args: string[], l: Listing): Promise<Spawned & { timeoutMs: number }> {
   const timeoutMs = Math.floor(l.deadline - performance.now());
   if (timeoutMs <= 0) return { status: null, stdout: '', timedOut: true, timeoutMs: 0 };
-  return { ...(await psAsync(args, timeoutMs)), timeoutMs };
+  return { ...(await psAsync(args, l.deadline)), timeoutMs };
 }
 
 const failure = (s: Spawned, timeoutMs: number): string =>
