@@ -496,7 +496,7 @@ export class Host {
     );
     const farSignal = r.within === true && a.signal !== undefined;
     if (farSignal) {
-      const local = r.front.state !== 'exited' && r.front.state !== 'waiting' && r.front.within ? quoted(r.front.within.argv) : 'the local program';
+      const local = (r.front.state === 'prompt' || r.front.state === 'running') && r.front.within ? quoted(r.front.within.argv) : 'the local program';
       steps.push(`Nothing was sent: a signal would reach ${local}, not the job in the shell within it. \`stop\` without \`signal\` types Ctrl-C there.`);
     } else if (!r.steps.length) steps.push(`Nothing was sent: ${frontText(r.front, now)}.`);
     if (r.next === 'close') steps.push('What runs is the shell itself, or a job that outlived KILL: only `close` ends it.');
@@ -817,6 +817,8 @@ function refusalAdvice(front: Front): string {
       if (front.starting) return `the shell is still running its startup files${front.process.shell ? '' : `, now ${quoted(front.process.argv)}`}, and \`run\` works once it has drawn its first prompt. \`look\` shows what it prints, \`send\` types into it.`;
       if (front.process.shell) return 'the shell itself is busy. `look` with `until: "end"` waits for it, `send` types into it. If a command removed the session\'s prompt hooks, `close` it and `open` it again.';
       return `${quoted(front.process.argv)} is running. \`look\` with \`until: "end"\` waits for it, \`send\` types into it, \`stop\` stops it.${integrateHint(front.process.argv)}`;
+    case 'unknown':
+      return "whether the shell is at its prompt couldn't be seen: reading its terminal failed. `run` again, or `look`.";
     case 'waiting': {
       const waits = `${quoted(front.process.argv)} is waiting for input${front.starting ? " in the shell's startup files" : ''}. \`send\` answers it`;
       return front.process.shell ? `${waits}.` : `${waits}, \`stop\` stops it.${integrateHint(front.process.argv)}`;

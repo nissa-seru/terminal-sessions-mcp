@@ -63,6 +63,16 @@ test('H6: a run refused away from the prompt says what is in front and what woul
   assert.match(r.text, /^\[main · waiting for input: python3 -c input\(\), not echoed, as for a password, for [\d.]+ s · \/home\/u\]\nNothing was typed: python3 -c input\(\) is waiting for input\. `send` answers it, `stop` stops it\.$/);
 });
 
+test("H6: when the terminal couldn't be read, the status line says so, and a refused run sends the agent to run again or look, not to wait", async () => {
+  const { host, opened } = setup();
+  await host.call(agent(), 'open', { name: 'main', cwd: '/home/u' });
+  opened[0]!.frontNow = { state: 'unknown', since: Date.now() };
+  const r = await host.call(agent(), 'run', { name: 'main', command: 'ls' });
+  assert.equal(r.isError, true);
+  assert.match(r.text, /^\[main · whether the shell is at its prompt can't be seen now: reading its terminal failed · \/home\/u\]\nNothing was typed: whether the shell is at its prompt couldn't be seen: reading its terminal failed\. `run` again, or `look`\.$/);
+  assert.equal((r.structured.front as { state: string }).state, 'unknown');
+});
+
 test('H6: every result but close\'s opens with the status line: a command\'s status, duration, directory and what is in front', async () => {
   const { host } = setup();
   await host.call(agent(), 'open', { name: 'main', cwd: '/srv/app' });
