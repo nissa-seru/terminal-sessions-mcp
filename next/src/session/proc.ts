@@ -335,6 +335,16 @@ export function descendants(pid: number, all = false): Proc[] | undefined {
   }
 }
 
+/** Whether process group `pgid` has a process. Only ESRCH says it has none: EPERM, for another user's group, says it has. */
+export function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
 /** Every descendant of `pid`, as `descendants` with `all` gives them, for `close`, which awaits `ps`. */
 export async function allDescendants(pid: number, l: Listing): Promise<Proc[] | undefined> {
   const fail = (why: string): undefined => void l.failed?.(`the shell's descendants: ${why}`);
