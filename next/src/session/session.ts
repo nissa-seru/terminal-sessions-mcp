@@ -378,6 +378,7 @@ class LiveSession implements Session {
     if (g === undefined) return undefined;
     if (g === w) return true;
     if (g === shell!.pgrp) return 'left';
+    if (g !== -1) return 'left';
     if (this.carrierSeen?.w === w && this.carrierSeen.g === g) return true;
     const family = proc.familyOf(this.pid, w);
     if (!family?.fromW) return undefined;
