@@ -10,7 +10,7 @@ import * as integration from './integration.js';
 import type { Nonce } from './integration.js';
 import * as proc from './proc.js';
 import { Transcript, type Pos } from './transcript.js';
-import type { Closed, Command, Ending, Exit, Front, Lines, Match, OpenOptions, OpenSession, Process, RunOutcome, Screen, SendOutcome, Session, SessionEvent, ShellKind, StopOutcome, StopStep, Took, Until, WaitOutcome } from './types.js';
+import type { Closed, Command, Ending, Exit, Front, Lines, Match, OpenOptions, OpenSession, Process, RunOutcome, Screen, SendOutcome, Session, SessionEvent, ShellKind, StopOutcome, StopStep, Until, WaitOutcome } from './types.js';
 
 const LINUX = process.platform === 'linux';
 const TICK_MS = 50;
@@ -21,11 +21,6 @@ const CLOSE_GRACE_MS = 2000;
 const HANGUP_EVERY_MS = 500;
 const RECENT_NONCES = 64;
 const MAX_COMMANDS = 10_000;
-/** The kept commands' text and discarded input, at most, besides the count: the frozen transcript's bound. */
-const MAX_COMMAND_CHARS = 6 * 1024 * 1024;
-const keptChars = (c: Command): number => (c.text?.length ?? 0) + (c.end?.flushed?.length ?? 0);
-/** What a recent nonce becomes in output, padded to the nonce's length so columns taken on the output as written still hold. */
-const REDACTED = '[redacted]';
 /** A process exec'd in the shell's place still counts as a shell when its name is one of these. */
 const SHELLS = new Set(['sh', 'ash', 'dash', 'hush', 'bash', 'zsh', 'fish', 'ksh', 'ksh93', 'mksh', 'pdksh', 'oksh', 'yash', 'posh', 'tcsh', 'csh']);
 /** `busybox APPLET` is a shell only for its shell applets; an applet run through its own link is named by it. */
@@ -74,7 +69,6 @@ const unescape = (v: string): string => v.replace(/\\(\\|x([0-9a-f]{2}))/g, (_, 
 interface Call {
   take: boolean;
   ended: Command[];
-  took: Took;
   own?: number;
 }
 
@@ -120,7 +114,6 @@ class LiveSession implements Session {
   /** At a shell without integration: `lastWrite` when `promptAt` was taken, so a prompt drawn later with nothing typed since moves it. */
   private promptAtWrite = -1;
   private readonly commands = new Map<number, Command>();
-  private commandChars = 0;
   private running: Command | undefined;
   private lastEnded: Command | undefined;
   private runCommand: Command | undefined;
@@ -128,7 +121,6 @@ class LiveSession implements Session {
   private cwdNow: string;
   private exitInfo: Exit | undefined;
   private ptyExit: Exit | undefined;
-  private exitDone: Promise<void> | undefined;
   private exitedAt = 0;
   private lastOutput = 0;
   private outputs = 0;
@@ -144,7 +136,7 @@ class LiveSession implements Session {
   private waitingKey = '';
   private readonly calls = new Set<Call>();
   private readonly wakers = new Set<() => void>();
-  private readonly watches = new Map<number, { pattern: RegExp; scan: Scan; command?: number }>();
+  private readonly watches = new Map<number, { pattern: RegExp; scan: Scan }>();
   private watchSeq = 0;
   private resuming = false;
   private readonly listeners = new Set<(e: SessionEvent) => void>();
@@ -190,14 +182,13 @@ class LiveSession implements Session {
     p.onExit(({ exitCode, signal }) => {
       this.ptyExit = signal ? { code: null, signal: `SIG${signalName(signal)}` } : { code: exitCode };
       this.exitedAt = Date.now();
-      this.exitDone = this.exited(this.ptyExit);
+      void this.exited(this.ptyExit);
     });
     this.schedulePoll();
   }
 
   async ready(waitMs: number): Promise<void> {
-    await this.until(mono() + waitMs, () => (this.prompted || this.ptyExit || (this.kind === 'none' && this.front().state === 'prompt') ? true : undefined));
-    if (this.exitDone) await this.exitDone;
+    await this.until(mono() + waitMs, () => (this.prompted || this.exitInfo || (this.kind === 'none' && this.front().state === 'prompt') ? true : undefined));
     this.opened = true;
   }
 
@@ -216,14 +207,14 @@ class LiveSession implements Session {
 
   private redact(s: string): string {
     if (!/\d{20}|[0-9a-f]{16}/.test(s)) return s;
-    for (const r of this.recent) if (s.includes(r)) s = s.replaceAll(r, REDACTED.padEnd(r.length, '.'));
+    for (const r of this.recent) if (s.includes(r)) s = s.replaceAll(r, '[redacted]');
     return s;
   }
 
   private mark(payload: string, at: Pos): boolean {
     const [kind, nonce, ...rest] = payload.split(';');
     const expected = integration.nonceText(this.expected);
-    if (kind === 'C' && nonce === expected && this.inCommand) return this.refused++, false;
+    if (kind === 'C' && nonce === expected && this.inCommand) return false;
     const ok = nonce === expected && !this.exitInfo;
     if (kind === 'C' && ok) return this.started(at, rest[0] ? unescape(rest[0]) : undefined), true;
     if (kind === 'D' && ok) {
@@ -256,16 +247,13 @@ class LiveSession implements Session {
   /** The text the prompt hook's drain read before the end mark closing nonce `counter`, from the file it wrote; the file is removed. */
   private drained(counter: number): string {
     const f = path.join(this.dir, `${integration.DRAINED}.${counter}`);
-    let text: string;
     try {
-      text = fs.readFileSync(f, 'utf8');
+      const text = fs.readFileSync(f, 'utf8');
+      fs.rmSync(f, { force: true });
+      return text;
     } catch {
       return '';
     }
-    try {
-      fs.rmSync(f, { force: true });
-    } catch {}
-    return text;
   }
 
   private started(at: Pos, text: string | undefined): void {
@@ -330,36 +318,21 @@ class LiveSession implements Session {
     c.to = Math.max(to, c.from);
     c.end = { ...end, ms: Math.max(0, Math.round(mono() - (this.startedMono.get(c) ?? mono()))) };
     this.lastEnded = c;
-    if (c.end.flushed && this.commands.get(c.id) === c) {
-      this.commandChars += c.end.flushed.length;
-      this.trimCommands();
-    }
     for (const f of this.files.get(c.id) ?? []) fs.rmSync(f, { force: true });
     this.files.delete(c.id);
-    const takers: Call[] = [];
+    let taken = false;
     for (const call of this.calls) {
       if (call.own !== undefined && call.own !== c.id) continue;
       call.ended.push(c);
-      if (call.take) takers.push(call);
+      taken ||= call.take;
     }
-    this.checkWatches(c);
-    for (const call of takers) call.took.push({ kind: 'ended', command: c, taken: true });
-    this.emit({ kind: 'ended', command: c, taken: takers.length > 0 });
+    this.checkWatches(true);
+    this.emit({ kind: 'ended', command: c, taken });
   }
 
   private store(c: Command): void {
     this.commands.set(c.id, c);
-    this.commandChars += keptChars(c);
-    this.trimCommands();
-  }
-
-  /** Drops the oldest commands past the count, or past the characters while more than the newest is kept. */
-  private trimCommands(): void {
-    while (this.commands.size > MAX_COMMANDS || (this.commandChars > MAX_COMMAND_CHARS && this.commands.size > 1)) {
-      const [id, old] = this.commands.entries().next().value!;
-      this.commands.delete(id);
-      this.commandChars -= keptChars(old);
-    }
+    if (this.commands.size > MAX_COMMANDS) this.commands.delete(this.commands.keys().next().value!);
   }
 
   private async exited(exit: Exit): Promise<void> {
@@ -371,9 +344,7 @@ class LiveSession implements Session {
     if (c) this.finish(c, undefined, { at: Date.now(), errexit: false, refusedMarks: this.refused });
     this.atPrompt = false;
     if (this.poll) clearTimeout(this.poll);
-    const takers = [...this.calls].filter((c) => c.take);
-    for (const call of takers) call.took.push({ kind: 'exited', exit, taken: true });
-    this.emit({ kind: 'exited', exit, taken: takers.length > 0 });
+    this.emit({ kind: 'exited', exit, taken: [...this.calls].some((c) => c.take) });
     this.wake();
   }
 
@@ -390,14 +361,14 @@ class LiveSession implements Session {
   private schedulePoll(): void {
     if (!LINUX || this.exitInfo || this.closed) return;
     this.poll = setTimeout(() => {
-      if (!this.atPrompt || this.submitted) this.observe(this.front(), [...this.calls].filter((c) => c.take));
+      if (!this.atPrompt || this.submitted) this.observe(this.front(), [...this.calls].some((c) => c.take));
       this.schedulePoll();
     }, POLL_MS);
     this.poll.unref();
   }
 
-  /** Emits `waiting` on each entry into that state. `takers`: the call returning `f`, or the calls still open, that give it. */
-  private observe(f: Front, takers: Call[]): void {
+  /** Emits `waiting` on each entry into that state. `taken`: the call returning `f`, or a call still open, gives it. */
+  private observe(f: Front, taken: boolean): void {
     if (f.state !== 'waiting') {
       this.waitingKey = '';
       return;
@@ -405,8 +376,7 @@ class LiveSession implements Session {
     const key = `${f.process.pgid}:${f.since}`;
     if (key === this.waitingKey) return;
     this.waitingKey = key;
-    for (const call of takers) call.took.push({ kind: 'waiting', front: f, taken: true });
-    this.emit({ kind: 'waiting', front: f, taken: takers.length > 0 });
+    this.emit({ kind: 'waiting', front: f, taken });
   }
 
   /** The terminal's echo, read once for each wait: `key` names the wait. */
@@ -592,7 +562,7 @@ class LiveSession implements Session {
 
   /** From the moment `signal` aborts, the call takes nothing it hasn't already. */
   private enter(take: boolean, signal: AbortSignal | undefined, own?: number): Call {
-    const call: Call = own !== undefined ? { take, ended: [], took: [], own } : { take, ended: [], took: [] };
+    const call: Call = own !== undefined ? { take, ended: [], own } : { take, ended: [] };
     this.calls.add(call);
     signal?.addEventListener('abort', () => ((call.take = false), this.wake()), { once: true });
     return call;
@@ -608,7 +578,7 @@ class LiveSession implements Session {
     const stopped = (): boolean => this.closed || opts.signal?.aborted === true;
     if (this.atPrompt && !this.submitted && !this.prompted && !stopped()) await this.until(deadline, () => (this.prompted || this.exitInfo || !this.atPrompt || stopped() ? true : undefined), opts.signal);
     const f = this.front();
-    if (stopped() || f.state !== 'prompt' || f.pending !== undefined) return { kind: 'refused', front: f, took: [] };
+    if (stopped() || f.state !== 'prompt' || f.pending !== undefined) return { kind: 'refused', front: f };
     const id = this.nextId();
     const c: Command = { id, text, from: this.t.pos().line + 1, startedAt: Date.now() };
     this.store(c);
@@ -623,7 +593,7 @@ class LiveSession implements Session {
     this.p.write(cf.line);
     try {
       await this.until(deadline, () => {
-        if (this.exitInfo || this.closed || opts.signal?.aborted) return true;
+        if (this.exitInfo || opts.signal?.aborted) return true;
         if (c.end) return this.prompted || (this.plain && this.lookDue() && this.front().state === 'prompt') ? true : undefined;
         if (!this.kernelSays || !this.lookDue() || (this.kind !== 'none' && mono() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS)) return undefined;
         return this.front().state === 'waiting' || c.end ? true : undefined;
@@ -633,14 +603,14 @@ class LiveSession implements Session {
       this.calls.delete(call);
     }
     const front = this.front();
-    this.observe(front, call.take ? [call] : []);
-    return c.end ? { kind: 'ended', command: c, front, took: call.took } : { kind: 'running', command: c, front, took: call.took };
+    this.observe(front, call.take);
+    return c.end ? { kind: 'ended', command: c, front } : { kind: 'running', command: c, front };
   }
 
   async send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number; take?: boolean; signal?: AbortSignal }): Promise<SendOutcome> {
     const from = this.t.pos().line;
     const gone = (): Exit | undefined => this.exitInfo ?? this.ptyExit;
-    const unsent = (by: SendOutcome['by']): SendOutcome => ({ sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by, took: [] });
+    const unsent = (by: SendOutcome['by']): SendOutcome => ({ sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by });
     const stopped = (): SendOutcome['by'] | undefined => (gone() ? 'exited' : this.closed ? 'closed' : opts.signal?.aborted ? 'cancelled' : undefined);
     if (stopped()) return unsent(stopped()!);
     const deadline = mono() + opts.waitMs;
@@ -666,7 +636,6 @@ class LiveSession implements Session {
     let by: SendOutcome['by'] = 'timeout';
     try {
       const r = await this.until(deadline, () => {
-        if (this.closed) return 'closed' as const;
         if (this.exitInfo) return 'exited' as const;
         if (opts.signal?.aborted) return 'cancelled' as const;
         if (opts.until) return (matched = this.scan(opts.until, scan)) ? ('match' as const) : undefined;
@@ -674,14 +643,13 @@ class LiveSession implements Session {
       }, opts.signal);
       if (r) by = r;
       await this.t.settled();
-      if (by === 'timeout' && opts.until && (matched = this.searchSettled(opts.until, scan))) by = 'match';
     } finally {
       this.calls.delete(call);
     }
     const front = this.front();
-    this.observe(front, call.take ? [call] : []);
+    this.observe(front, call.take);
     const screen = this.t.screen();
-    return { sent: true, lines: this.t.lines(from), ...(screen.alt && { screen }), front, ended: call.ended, ...(matched && { matched }), by, ...(opts.until && !matched && this.searched(scan)), took: call.took };
+    return { sent: true, lines: this.t.lines(from), ...(screen.alt && { screen }), front, ended: call.ended, ...(matched && { matched }), by, ...(opts.until && !matched && this.searched(scan)) };
   }
 
   async wait(until: Until, opts: { waitMs: number; from: number; take?: boolean; signal?: AbortSignal }): Promise<WaitOutcome> {
@@ -692,7 +660,6 @@ class LiveSession implements Session {
     let by: WaitOutcome['by'] = 'timeout';
     try {
       const r = await this.until(deadline, () => {
-        if (this.closed) return 'closed' as const;
         if (this.exitInfo) return 'exited' as const;
         if (opts.signal?.aborted) return 'cancelled' as const;
         if (until.kind === 'match') return (matched = this.scan(until.pattern, scan)) ? ('match' as const) : undefined;
@@ -704,18 +671,12 @@ class LiveSession implements Session {
       }, opts.signal);
       if (r) by = r;
       await this.t.settled();
-      if (by === 'timeout' && until.kind === 'match' && (matched = this.searchSettled(until.pattern, scan))) by = 'match';
     } finally {
       this.calls.delete(call);
     }
     const front = this.front();
-    this.observe(front, call.take ? [call] : []);
-    return { by, front, ended: call.ended, ...(matched && { matched }), ...(until.kind === 'match' && !matched && this.searched(scan)), took: call.took };
-  }
-
-  /** After a wait ran out and the parse caught up: when that parse added lines, one more slice of the search, so `searched` counts from where the search really stopped. */
-  private searchSettled(pattern: RegExp, s: Scan): Match | undefined {
-    return s.parses === this.parses ? undefined : this.scan(pattern, s);
+    this.observe(front, call.take);
+    return { by, front, ended: call.ended, ...(matched && { matched }), ...(until.kind === 'match' && !matched && this.searched(scan)) };
   }
 
   /**
@@ -723,24 +684,19 @@ class LiveSession implements Session {
    * then, while the alternate screen is active, its first row that matches. A pass begins after each parse,
    * moves `s.from` past frozen lines that didn't match, and counts the lines it searched on their head only.
    * It searches at least one line or row in each turn, and once this turn's searches have spent their slice,
-   * the pass stops and goes on in a later turn. `upto` begins a pass though nothing was parsed since the last,
-   * and searches the lines before that line at once; the rest wait for a slice.
+   * the pass stops and goes on in a later turn; `now` begins a pass though nothing was parsed since the last, and
+   * searches to its end.
    */
-  private scan(pattern: RegExp, s: Scan, upto?: number): Match | undefined {
-    const now = upto !== undefined;
+  private scan(pattern: RegExp, s: Scan, now = false): Match | undefined {
     if (now || s.parses !== this.parses) Object.assign(s, { parses: this.parses, next: s.from, row: 0, live: 0 });
     else if (s.next === undefined) return undefined;
     let n = s.next!;
     for (;;) {
       const ls = this.t.lines(n, n + SCAN_CHUNK);
-      if (ls.lines.length === 0) {
-        if (ls.from <= n) break;
-        n = ls.from;
-        continue;
-      }
+      if (ls.lines.length === 0) break;
       const frozen = ls.lines.length - ls.live;
       for (let i = 0; i < ls.lines.length; i++) {
-        if (upto !== undefined ? ls.from + i >= upto : spent() && s.turn === turn) return this.later(s, ls.from + i, 0);
+        if (!now && spent() && s.turn === turn) return this.later(s, ls.from + i, 0);
         s.turn = turn;
         const r = testBounded(pattern, ls.lines[i]!);
         if (r.matched) return { line: ls.from + i, text: ls.lines[i]!, ...(r.clipped && { clipped: true as const }) };
@@ -752,9 +708,9 @@ class LiveSession implements Session {
       n = ls.to;
     }
     const screen = this.t.screen();
-    if (screen.alt && !now)
+    if (screen.alt)
       for (let row = s.row; row < screen.rows.length; row++) {
-        if (spent() && s.turn === turn) return this.later(s, n, row);
+        if (!now && spent() && s.turn === turn) return this.later(s, n, row);
         s.turn = turn;
         const r = testBounded(pattern, screen.rows[row]!);
         if (r.matched) return { line: this.t.end(), text: screen.rows[row]!, row, ...(r.clipped && { clipped: true as const }) };
@@ -780,42 +736,37 @@ class LiveSession implements Session {
     return undefined;
   }
 
-  /** For a search that ended without a match: the lines it searched on their head only, and the kept lines and rows its pass hadn't reached, from the first such line. */
-  private searched(s: Scan): { clipped?: number; unsearched?: number; unsearchedFrom?: number } {
+  /** For a search that ended without a match: the lines it searched on their head only, and the lines and rows its pass hadn't reached. */
+  private searched(s: Scan): { clipped?: number; unsearched?: number } {
     const clipped = s.clipped + (s.next === undefined ? s.clippedLive : s.live);
-    if (s.next === undefined) return clipped > 0 ? { clipped } : {};
-    const screen = this.t.screen();
-    const from = this.t.lines(s.next, s.next).from;
-    const unsearched = Math.max(0, this.t.end() - from) + (screen.alt ? Math.max(0, screen.rows.length - s.row) : 0);
-    return { ...(clipped > 0 && { clipped }), ...(unsearched > 0 && { unsearched, unsearchedFrom: from }) };
+    const screen = s.next === undefined ? undefined : this.t.screen();
+    const unsearched = screen ? Math.max(0, this.t.end() - s.next!) + (screen.alt ? Math.max(0, screen.rows.length - s.row) : 0) : 0;
+    return { ...(clipped > 0 && { clipped }), ...(unsearched > 0 && { unsearched }) };
   }
 
-  /** Whether process group `pgid` still has a member among the shell's descendants, so a signal to it reaches the job it was read as; undefined when they can't be listed. */
-  private ours(pgid: number): boolean | undefined {
-    return proc.descendants(this.pid, true)?.some((d) => d.pgrp === pgid);
+  /** Whether process group `pgid` still has a member among the shell's descendants, so a signal to it reaches the job it was read as. No, when they can't be listed. */
+  private ours(pgid: number): boolean {
+    return proc.descendants(this.pid, true)?.some((d) => d.pgrp === pgid) ?? false;
   }
 
-  async stop(signal?: NodeJS.Signals, opts: { abort?: AbortSignal } = {}): Promise<StopOutcome> {
+  async stop(signal?: NodeJS.Signals): Promise<StopOutcome> {
     const steps: StopStep[] = [];
     let f = this.front();
-    const aborted = (): boolean => opts.abort?.aborted === true;
-    if (aborted()) return { steps, front: f, cancelled: true };
     if (f.state === 'prompt' || f.state === 'exited') return { steps, front: f };
     const target = f.process;
     const own = target.shell || target.pgid === this.pid;
     const settled = (now: Front): boolean => now.state === 'prompt' || now.state === 'exited' || (!now.process.shell && now.process.pgid !== target.pgid);
-    const gone = (now: Front): boolean => now.state === 'prompt' || now.state === 'exited' || (now.process.pgid !== target.pgid && (!now.process.shell || this.ours(target.pgid) !== true));
+    const gone = (now: Front): boolean => now.state === 'prompt' || now.state === 'exited' || (now.process.pgid !== target.pgid && (!now.process.shell || !this.ours(target.pgid)));
     const cleared = async (): Promise<Front> =>
       (await this.until(mono() + STEP_GRACE_MS, () => {
         const now = this.front();
         return settled(now) ? now : undefined;
-      }, opts.abort)) ?? this.front();
+      })) ?? this.front();
     const step = async (sent: StopStep['sent']): Promise<boolean> => {
-      const mine = sent === 'C-c' ? true : this.ours(target.pgid);
       if (sent === 'C-c') {
         this.lastWrite = mono();
         this.p.write('\x03');
-      } else if (mine) {
+      } else if (this.ours(target.pgid)) {
         const refused = proc.signalGroup(target.pgid, sent);
         if (refused) {
           f = this.front();
@@ -824,7 +775,6 @@ class LiveSession implements Session {
         }
       } else {
         f = this.front();
-        if (mine === undefined) steps.push({ sent, to: target, withheld: true, front: f });
         return true;
       }
       f = await cleared();
@@ -837,12 +787,8 @@ class LiveSession implements Session {
       return { steps, front: f };
     }
     if (await step('C-c')) return { steps, front: f };
-    if (aborted()) return { steps, front: f, cancelled: true };
     if (own) return { steps, front: f, next: 'close' };
-    for (const s of ['SIGTERM', 'SIGKILL'] as const) {
-      if (await step(s)) return { steps, front: f };
-      if (aborted()) return { steps, front: f, cancelled: true };
-    }
+    for (const s of ['SIGTERM', 'SIGKILL'] as const) if (await step(s)) return { steps, front: f };
     return { steps, front: f, next: 'close' };
   }
 
@@ -851,7 +797,6 @@ class LiveSession implements Session {
     this.wake();
     if (this.poll) clearTimeout(this.poll);
     let unlisted = false;
-    const unkilled: Array<{ pgid: number; error: string }> = [];
     if (!this.exitInfo) {
       const killShell = (): void => {
         try {
@@ -861,10 +806,7 @@ class LiveSession implements Session {
       if (opts.force) {
         const ds = proc.descendants(this.pid, true);
         unlisted = ds === undefined;
-        for (const pgid of new Set((ds ?? []).map((d) => d.pgrp))) {
-          const error = proc.signalGroup(pgid, 'SIGKILL');
-          if (error && error !== 'ESRCH') unkilled.push({ pgid, error });
-        }
+        for (const d of ds ?? []) proc.signalGroup(d.pgrp, 'SIGKILL');
         killShell();
       } else {
         // bash can miss a SIGHUP that lands just before its line editor waits for input, and go on waiting.
@@ -885,13 +827,12 @@ class LiveSession implements Session {
     fs.rmSync(this.dir, { recursive: true, force: true });
     const closed: Closed = exit ? { ...exit } : { code: null, signal: 'SIGKILL', unconfirmed: true };
     if (unlisted) closed.unlisted = true;
-    if (unkilled.length) closed.unkilled = unkilled;
     return closed;
   }
 
-  watch(pattern: RegExp, from: number, command?: number): number {
+  watch(pattern: RegExp, from: number): number {
     const id = ++this.watchSeq;
-    this.watches.set(id, { pattern, scan: newScan(from), ...(command !== undefined && { command }) });
+    this.watches.set(id, { pattern, scan: newScan(from) });
     queueMicrotask(() => this.checkWatches());
     return id;
   }
@@ -900,11 +841,10 @@ class LiveSession implements Session {
     this.watches.delete(id);
   }
 
-  /** `ended`: as `finish` does inside the parse, search that command's own watches through its output at once, so a match there is emitted before its `ended`; other watches wait for their slice. */
-  private checkWatches(ended?: Command): void {
+  /** `now`: scan though nothing was parsed since the last scan, as `finish` does inside the parse, so a match in a command's output is emitted before its `ended`. */
+  private checkWatches(now = false): void {
     for (const [id, w] of this.watches) {
-      if (ended && w.command !== ended.id) continue;
-      const m = this.scan(w.pattern, w.scan, ended?.to);
+      const m = this.scan(w.pattern, w.scan, now);
       if (m) {
         this.watches.delete(id);
         this.emit({ kind: 'match', watch: id, match: m });
@@ -933,7 +873,7 @@ export const openSession: OpenSession = async (o) => {
     throw err('backend_failure', `the shell ${o.shell} cannot be run`);
   }
   const bash = findBash();
-  if (!bash) throw err('backend_failure', 'this host has no bash, which closes the descriptors a shell would otherwise inherit from the daemon. Sessions open here once bash is installed');
+  if (!bash) throw err('backend_failure', 'this host has no bash, which closes the descriptors a shell would otherwise inherit from the daemon');
   const dir = fs.mkdtempSync(path.join(o.parent, 's-'));
   const nonce: Nonce = { counter: 1, random: randomDigits() };
   const launch = integration.prepare(o.shell, dir, nonce, o.env);
@@ -944,14 +884,14 @@ export const openSession: OpenSession = async (o) => {
     p = pty.spawn(file, args, { name: env.TERM ?? 'xterm-256color', cwd: o.cwd, env, cols: o.cols, rows: o.rows });
   } catch (e) {
     fs.rmSync(dir, { recursive: true, force: true });
-    throw err('backend_failure', `the shell could not start: ${(e as Error).message}. If that error passes, such as a limit on processes, opening again may work`);
+    throw err('backend_failure', `the shell could not start: ${(e as Error).message}`);
   }
   const s = new LiveSession(o, p, dir, launch.kind, nonce, o.nextCommandId, [o.shell, ...launch.args].join(' '));
   await s.ready(o.waitMs);
   if (s.exit) {
     const said = s.startupText();
     await s.close();
-    throw err('backend_failure', `the shell exited as it started (${s.exit.signal ?? `status ${s.exit.code}`}). Its startup files or the directory are the likely cause, and opening again runs them again${said ? `. It printed: ${said.slice(-500)}` : ''}`);
+    throw err('backend_failure', `the shell exited as it started (${s.exit.signal ?? `status ${s.exit.code}`})${said ? `: ${said.slice(-500)}` : ''}`);
   }
   return s;
 };
