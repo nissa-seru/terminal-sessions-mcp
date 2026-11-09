@@ -1069,8 +1069,12 @@ class LiveSession implements Session {
         } catch {}
       };
       // Listed before the first signal: once the shell exits, nothing in its session has a terminal.
+      const t0 = performance.now();
       const onTerminal = proc.onTerminal(this.pid, this.pts)?.filter((d) => d.pid !== this.pid);
+      const t1 = performance.now();
       const ds = opts.force ? proc.descendants(this.pid, true) : [];
+      const t2 = performance.now();
+      this.log?.(`PROBE onTerminal=${onTerminal ? onTerminal.length : 'undefined'} ${Math.round(t1 - t0)}ms descendants=${ds ? ds.length : 'undefined'} ${Math.round(t2 - t1)}ms`);
       unlisted = onTerminal === undefined || ds === undefined;
       const listed = [...(onTerminal ?? []), ...(ds ?? [])];
       /**
@@ -1079,7 +1083,9 @@ class LiveSession implements Session {
        * result says what was started may live on.
        */
       const reach = (signal: 'SIGHUP' | 'SIGKILL'): void => {
+        const t3 = performance.now();
         const held = proc.held(listed);
+        this.log?.(`PROBE held(${signal})=${held ? [...held].length : 'undefined'} of ${listed.length} listed ${Math.round(performance.now() - t3)}ms`);
         if (!held) {
           if (listed.length) unlisted = true;
           return;
