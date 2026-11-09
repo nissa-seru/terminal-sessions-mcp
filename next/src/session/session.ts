@@ -21,11 +21,6 @@ const CLOSE_GRACE_MS = 2000;
 const HANGUP_EVERY_MS = 500;
 const RECENT_NONCES = 64;
 const MAX_COMMANDS = 10_000;
-/**
- * The longest line `run` types into a shell given the integration by typing. zsh's and bash 3's line editors take time that grows
- * with its square: on GitHub's macOS runners, in one run each, an 8 KiB line took them 0.8 to 1.5 s, and 16 KiB 2.5 to 4.8 s.
- */
-const FAR_MAX_TYPED = 8192;
 /** The kept commands' text and discarded input, at most, besides the count: the frozen transcript's bound. */
 const MAX_COMMAND_CHARS = 6 * 1024 * 1024;
 const keptChars = (c: Command): number => (c.text?.length ?? 0) + (c.end?.flushed?.length ?? 0);
@@ -169,8 +164,11 @@ class LiveSession implements Session {
   private readonly log: ((line: string) => void) | undefined;
   private readonly shellName: string;
   private readonly chains: Chain[];
-  /** While `integrate` runs: its probe line's answer, and the index of the last typed line that acknowledged it ran. */
-  private probe: { call: string; answer?: ProbeAnswer; acked?: number } | undefined;
+  /**
+   * While `integrate` runs: its probe line's answer; the index of the last typed line that acknowledged it ran, and where;
+   * once its chain is pushed, that chain, and where its first end mark came.
+   */
+  private probe: { call: string; answer?: ProbeAnswer; acked?: number; ackedAt?: Pos; chain?: Chain; endAt?: Pos } | undefined;
   private readonly recent: string[] = [];
   private readonly commands = new Map<number, Command>();
   private commandChars = 0;
@@ -287,7 +285,10 @@ class LiveSession implements Session {
     }
     if (kind === 'P') {
       const m = /^(\d+)\.(\d+)$/.exec(nonce ?? '');
-      if (this.probe && m && m[1] === this.probe.call) this.probe.acked = Number(m[2]);
+      if (this.probe && m && m[1] === this.probe.call) {
+        this.probe.acked = Number(m[2]);
+        this.probe.ackedAt = at;
+      }
       this.wake();
       return false;
     }
@@ -305,6 +306,7 @@ class LiveSession implements Session {
       const [next, status, pipe, flags, cwd] = rest;
       const m = /^(\d+)\.(\w+)$/.exec(next ?? '');
       if (m && Number(m[1]) === this.top.expected.counter + 1) {
+        if (this.probe?.chain === this.top) this.probe.endAt ??= at;
         this.ended(at, { status: Number(status), pipe: (pipe ?? '').split(' ').filter(Boolean).map(Number), flags: flags ?? '', cwd: unescape(cwd ?? ''), flushed: far ? farDrained(far) : this.drained(this.top.expected.counter) });
         this.top.expected = { counter: Number(m[1]), random: m[2]! };
         this.remember(this.top.expected);
@@ -711,7 +713,7 @@ class LiveSession implements Session {
     if (stopped() || f.state !== 'prompt' || f.pending !== undefined) return { kind: 'refused', front: f, took: [] };
     const far = this.top.far;
     const farLine = far && integration.farCommand(far.kind, text);
-    if (farLine && farLine.length > FAR_MAX_TYPED) return { kind: 'refused', front: f, took: [], tooLong: { typed: farLine.length, max: FAR_MAX_TYPED } };
+    if (farLine && farLine.length > integration.FAR_MAX_TYPED) return { kind: 'refused', front: f, took: [], tooLong: { typed: farLine.length, max: integration.FAR_MAX_TYPED } };
     const id = this.nextId();
     const c: Command = { id, text, from: this.t.pos().line + 1, startedAt: Date.now() };
     this.store(c);
@@ -958,17 +960,26 @@ class LiveSession implements Session {
     const by = (): 'exited' | 'closed' | 'cancelled' | undefined => (this.exitInfo || this.ptyExit ? 'exited' : this.closed ? 'closed' : opts.signal?.aborted ? 'cancelled' : undefined);
     const f = this.front();
     if (f.state === 'exited' || this.prompted || by()) return { kind: 'refused', front: f };
+    // A shell with marks is at its prompt from its end mark on, drawn or not; a line sent there that hasn't started may reach a question.
+    if (this.top.atPrompt && !this.plain) return { kind: 'refused', front: f, ...(this.top.submitted && { sent: true as const }) };
     const within: Process = f.state === 'prompt' ? { pgid: this.pid, argv: proc.info(this.pid)?.argv ?? this.shellName, shell: true } : f.process;
+    const below = this.top;
+    const plainBelow = this.plain && within.pgid !== this.pid;
+    // Until the hooks' chain is pushed, the shell below drawing its prompt means what the lines were typed into has ended.
+    const ended = (): boolean => !this.chains.includes(below) || below.atPrompt || (plainBelow && this.lookDue() && this.front().state === 'prompt');
+    // Kept once found: a look at a plain shell is throttled, and the shell below may start what was typed after it.
+    let stopped: 'exited' | 'closed' | 'cancelled' | undefined;
+    const stop = (): typeof stopped => (stopped ??= by() ?? (ended() ? 'exited' : undefined));
     const call = String(randomInt(100000, 1000000));
     const answered = async (): Promise<ProbeAnswer | undefined> => {
       this.probe = { call };
-      return (await this.until(deadline, () => this.probe?.answer ?? (by() ? null : undefined), opts.signal)) ?? undefined;
+      return (await this.until(deadline, () => (stop() ? null : this.probe?.answer), opts.signal)) ?? undefined;
     };
     try {
       this.lastWrite = mono();
       this.p.write(integration.PROBE_LINE);
       const answer = await answered();
-      if (!answer) return { kind: 'incomplete', step: 'probe', by: by() ?? 'timeout', front: this.front() };
+      if (!answer) return { kind: 'incomplete', step: 'probe', by: stop() ?? 'timeout', front: this.front() };
       const kind = answer.fish ? 'fish' : answer.zsh ? 'zsh' : answer.bash ? 'bash' : undefined;
       if (!kind) {
         this.p.write(integration.PROBE_ZERO_LINE);
@@ -982,20 +993,39 @@ class LiveSession implements Session {
       for (const [i, line] of lines.slice(0, -1).entries()) {
         this.lastWrite = mono();
         this.p.write(line);
-        if (!(await this.until(deadline, () => ((this.probe?.acked ?? -1) >= i ? true : by() ? false : undefined), opts.signal)))
-          return { kind: 'incomplete', step: 'hooks', by: by() ?? 'timeout', front: this.front() };
+        // A line that ran in the shell below, after its end mark, acknowledges nothing.
+        if (!(await this.until(deadline, () => (stop() ? false : (this.probe?.acked ?? -1) >= i ? true : undefined), opts.signal)))
+          return { kind: 'incomplete', step: 'hooks', by: stop() ?? 'timeout', front: this.front() };
       }
       const chain = newChain(nonce, '');
       chain.far = { kind, within, drained: [] };
       this.chains.push(chain);
+      this.probe!.chain = chain;
       this.lastWrite = mono();
       this.p.write(lines.at(-1)!);
       const drawn = await this.until(deadline, () => (!this.chains.includes(chain) || by() ? false : this.top === chain && this.prompted ? true : undefined), opts.signal);
-      if (drawn) return { kind: 'integrated', shell: kind, version: answer[kind], front: this.front() };
-      return { kind: 'incomplete', step: 'hooks', by: by() ?? (this.chains.includes(chain) ? 'timeout' : 'exited'), front: this.front() };
+      if (!drawn) return { kind: 'incomplete', step: 'hooks', by: by() ?? (this.chains.includes(chain) ? 'timeout' : 'exited'), front: this.front() };
+      const p = this.probe!;
+      const from = p.acked === lines.length - 1 ? p.ackedAt : undefined;
+      const to = p.endAt ?? (chain.promptAt && { line: chain.promptAt.line, col: 0 });
+      const printed = from && to ? this.between(from, to) : [];
+      return { kind: 'integrated', shell: kind, version: answer[kind], ...(printed.some((l) => l.trim()) && { printed }), front: this.front() };
     } finally {
       this.probe = undefined;
     }
+  }
+
+  /** The transcript's text from `a` to `b`, a line each: the first from `a`'s column, the last up to `b`'s. */
+  private between(a: Pos, b: Pos): string[] {
+    if (b.line < a.line || (b.line === a.line && b.col <= a.col)) return [];
+    const r = this.t.lines(a.line, b.line + 1);
+    const ls = r.lines;
+    if (r.from === a.line && ls.length) ls[0] = ls[0]!.slice(a.col);
+    if (r.to === b.line + 1 && ls.length) {
+      if (b.col === 0) ls.pop();
+      else ls[ls.length - 1] = b.line === a.line && r.from === a.line ? ls.at(-1)!.slice(0, b.col - a.col) : ls.at(-1)!.slice(0, b.col);
+    }
+    return ls;
   }
 
   async close(opts: { force?: boolean } = {}): Promise<Closed> {

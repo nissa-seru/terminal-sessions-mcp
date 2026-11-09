@@ -239,17 +239,25 @@ export interface StopOutcome {
 }
 
 export type IntegrateOutcome =
-  /** The shell in front answered the probe and drew a prompt with the hooks: `front` is that prompt, with `within`. */
-  | { kind: 'integrated'; shell: 'bash' | 'zsh' | 'fish'; version: string; front: Front }
-  /** Nothing was typed: a shell with the integration is at its prompt (the session's own, or one given it before), the shell exited, or the call was cancelled first. */
-  | { kind: 'refused'; front: Front }
+  /**
+   * The shell in front answered the probe and drew a prompt with the hooks: `front` is that prompt, with `within`. `printed` is what
+   * the shell printed while it took them, a line each, from the last typed line's run to its first end mark; with nothing printed, it's absent.
+   */
+  | { kind: 'integrated'; shell: 'bash' | 'zsh' | 'fish'; version: string; printed?: string[]; front: Front }
+  /**
+   * Nothing was typed: a shell with the integration is at its prompt, drawn or not (the session's own, or one given it before), the
+   * shell exited, or the call was cancelled first. `sent`: a line was sent at that prompt and hasn't started yet, so what is in front
+   * may be a question, such as a password, that anything typed would answer.
+   */
+  | { kind: 'refused'; sent?: true; front: Front }
   /** A shell answered the probe that has no hooks here (sh, dash, ash, and others). Nothing more was typed. `shell` is its `$0`, when it gave one. */
   | { kind: 'unsupported'; shell?: string; front: Front }
   /**
    * The call stopped before the step it names was complete, and nothing more is typed. `probe`: the probe line was typed and no
    * shell answered. `hooks`: the hooks go in pieces, each typed once the one before has run, and they weren't all typed, or the
    * last was and no prompt with them was drawn yet. Only the last puts them to use: if it was typed and a prompt is drawn later,
-   * the shell has the integration from then on. `exited`: the session's shell exited, or, at `hooks`, so did the shell the hooks were typed into.
+   * the shell has the integration from then on. `exited`: the session's shell exited, or what the probe or the hooks were typed into
+   * ended, and a shell below it came back to its prompt.
    */
   | { kind: 'incomplete'; step: 'probe' | 'hooks'; by: 'timeout' | 'cancelled' | 'exited' | 'closed'; front: Front };
 
@@ -299,7 +307,8 @@ export interface Session {
   /**
    * Gives the shell now in front the integration, typed, so that `run` types there and its marks give the front, statuses and
    * the directory until it exits; then the shell it was typed from is in front again. It types a probe line, then that shell's hooks,
-   * into whatever holds the terminal, so it's for a shell at its prompt. Refused at the prompt of a shell with the integration.
+   * into whatever holds the terminal, so it's for a shell at its prompt. Refused at the prompt of a shell with the integration, from
+   * its end mark on, and while a line sent there hasn't started. If what it types into ends before the hooks are all typed, it stops.
    */
   integrate(opts: { waitMs: number; signal?: AbortSignal }): Promise<IntegrateOutcome>;
   /** Lists the processes on the session's terminal first. Then it hangs up the shell, again every 500 ms while it is there, and KILLs it if it is still there after a grace. Once the shell is gone, it hangs up each listed group, and continues each group the hangup reached. A process that left the terminal with setsid isn't listed, so it lives on. With `force`, at once KILLs every listed group and every group the shell started, then the shell. Resolves with the exit, at once if it had exited. */

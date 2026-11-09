@@ -424,12 +424,12 @@ __tsm_pre() {
   case $\{PS0-} in *'133;C;'*) ;; *) builtin printf '\\033]133;C;%s.%s;\\007' "$__tsm_c" "$__tsm_r" ;; esac
   builtin history -s -- "$__tsm_t"
 }
-HISTIGNORE="$\{HISTIGNORE:+$HISTIGNORE:}"' __tsm_*: eval "$(printf *'
+HISTIGNORE="$\{HISTIGNORE:+$HISTIGNORE:}"' __tsm_*'
 __tsm_dr=@DR@
 `,
   zsh: `__tsm_setst() { return $1 }
 __tsm_pre() { builtin print -s -- "$__tsm_t" }
-__tsm_nohist() { [[ $1 != ' __tsm_'* && $1 != ' eval "$(printf '* ]] }
+__tsm_nohist() { [[ $1 != ' __tsm_'* ]] }
 __tsm_dr=@DR@
 `,
   fish: `function __tsm_pre
@@ -451,7 +451,8 @@ const FAR_DRAIN_CALL: Record<FarKind, string> = {
  * The lines that give a shell of `kind` the hooks, its chain starting at `nonce`, each to be typed once the one before has printed
  * its P mark, which carries `call` and the line's index. The first turns saving history to a file off: zsh and fish can save a line as it's entered,
  * and bash a line it ran before a later one runs, so it carries no nonce. The pieces of the escaped program go into a variable,
- * and the last line decodes and evals it; the prompt that follows is its acknowledgement.
+ * and the last line prints its P mark, then decodes and evals it; the prompt that follows is its acknowledgement. What the shell
+ * prints between that mark and its first end mark came from taking the hooks.
  */
 export function farHooks(kind: FarKind, nonce: Nonce, call: string): string[] {
   const quote = kind === 'fish' ? fishq : sq;
@@ -471,10 +472,17 @@ export function farHooks(kind: FarKind, nonce: Nonce, call: string): string[] {
     pieces.push(e.slice(i, j));
     i = j;
   }
+  const last = pieces.length + 1;
   if (kind === 'fish')
-    return [` set -g fish_history ''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` set ${i ? '' : '-g '}__tsm_h ${i ? '"$__tsm_h"' : ''}'${p}'${ack(kind, call, i + 1)}\r`), ` eval (printf '%b' "$__tsm_h" | string collect); set -e __tsm_h\r`];
-  return [` unset HISTFILE${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` __tsm_h=${i ? '$__tsm_h' : ''}'${p}'${ack(kind, call, i + 1)}\r`), ` eval "$(printf '%b' "$__tsm_h")"; unset __tsm_h\r`];
+    return [` set -g fish_history ''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` set ${i ? '' : '-g '}__tsm_h ${i ? '"$__tsm_h"' : ''}'${p}'${ack(kind, call, i + 1)}\r`), ` true${ack(kind, call, last)}; eval (printf '%b' "$__tsm_h" | string collect); set -e __tsm_h\r`];
+  return [` unset HISTFILE${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` __tsm_h=${i ? '$__tsm_h' : ''}'${p}'${ack(kind, call, i + 1)}\r`), ` true${ack(kind, call, last)}; eval "$(printf '%b' "$__tsm_h")"; unset __tsm_h\r`];
 }
+
+/**
+ * The longest line `run` types into a shell given the integration by typing. zsh's and bash 3's line editors take time that grows
+ * with its square: on GitHub's macOS runners, in one run each, an 8 KiB line took them 0.8 to 1.5 s, and 16 KiB 2.5 to 4.8 s.
+ */
+export const FAR_MAX_TYPED = 8192;
 
 /**
  * The line `run` types into a shell given the integration by typing, at its prompt. The text goes once, escaped, into a variable;

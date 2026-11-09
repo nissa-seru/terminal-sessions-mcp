@@ -427,6 +427,17 @@ for (const sh of shells) {
       await pendingIs(s, 'zq');
     });
 
+    test('after a blank line, which ends with no start mark, run waits for the prompt a hook holds, then runs', { skip: sh.name === 'fish' ? 'fish prints no end mark for a blank line' : false }, async () => {
+      const gate = newGate();
+      const s = await open(shell, { rc: gateHook(sh.name, gate) });
+      await heldAfter(s, gate, '', 'send');
+      const pending = s.run('echo later', { waitMs: 10_000 });
+      fs.rmSync(gate);
+      const later = await pending;
+      assert.equal(later.kind, 'ended', JSON.stringify(later));
+      assert.deepEqual(later.kind === 'ended' && out(s, later.command), ['later']);
+    });
+
     test('run waits within its wait for a prompt that is slow to draw, and refuses, typing nothing, only when the wait runs out', async () => {
       const gate = newGate();
       const s = await open(shell, { rc: gateHook(sh.name, gate) });
@@ -1305,6 +1316,7 @@ async function far(s: Session, shell: string, env: Record<string, string> = {}):
   await reachFar(s, shell, env);
   const r = await s.integrate({ waitMs: 10_000 });
   assert.equal(r.kind, 'integrated', JSON.stringify({ r, tail: s.lines(Math.max(0, s.lines(0).to - 30)).lines.map((l) => l.slice(0, 160)) }));
+  assert.equal(r.kind === 'integrated' && r.printed, undefined, 'the shell printed nothing while it took the hooks');
 }
 
 for (const sh of shells) {
@@ -1318,6 +1330,7 @@ for (const sh of shells) {
       const r = await s.integrate({ waitMs: 10_000 });
       assert.equal(r.kind, 'integrated', JSON.stringify(r));
       assert.equal(r.kind === 'integrated' && r.shell, sh.name);
+      assert.equal(r.kind === 'integrated' && r.printed, undefined, JSON.stringify(r));
       assert.equal(r.front.state, 'prompt');
       assert.match((r.front.state === 'prompt' && r.front.within?.argv) || '', /script/);
       const cd = await ran(s, 'cd /');
@@ -1436,6 +1449,40 @@ for (const sh of shells) {
       assert.ok(!/\d{20}/.test(s.lines(0).lines.join('\n')), 'no nonce in the transcript');
     });
 
+    test('integrate is refused from an end mark on, while a prompt hook holds the prompt, and types nothing', async () => {
+      const gate = newGate();
+      const s = await open(shell, { rc: gateHook(sh.name, gate) });
+      await heldAfter(s, gate, 'true', 'run');
+      const r = await s.integrate({ waitMs: 2000 });
+      assert.equal(r.kind, 'refused', JSON.stringify(r));
+      assert.equal(r.kind === 'refused' && r.sent, undefined);
+      fs.rmSync(gate);
+      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+    });
+
+    test('integrate is refused, saying so, while a line sent at the prompt hasn\'t started, and types nothing', async () => {
+      const s = await open(shell);
+      // A trailing backslash continues the line, so the shell has it and nothing has started.
+      await s.send('echo un\\\r', { waitMs: 2000, quietMs: 200 });
+      const r = await s.integrate({ waitMs: 2000 });
+      assert.deepEqual([r.kind, r.kind === 'refused' && r.sent], ['refused', true], JSON.stringify(r));
+      const done = await s.send('finished\r', { waitMs: 5000, until: /^unfinished$/ });
+      assert.equal(done.by, 'match', JSON.stringify(done.lines));
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+    });
+
+    test('a probe line typed into a program that reads it and ends stops the call at once, by exited', async () => {
+      const s = await open(shell);
+      const r0 = await s.run('head -n 1 >/dev/null', { waitMs: 200 });
+      assert.equal(r0.kind, 'running', JSON.stringify(r0));
+      await inFront(s, /head/);
+      const r = await s.integrate({ waitMs: 10_000 });
+      assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['probe', 'exited'], JSON.stringify(r));
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+    });
+
     test('a run whose typed line would be longer than a far shell takes is refused, naming the limit', async () => {
       const s = await open(shell);
       await far(s, shell);
@@ -1500,8 +1547,43 @@ for (const sh of shells) {
       });
       assert.deepEqual(out(s, await ran(s, 'echo late')), ['late']);
     });
+
+    test('a far shell that ends while the hooks go in stops the call at once, by exited', { skip: sh.name !== 'bash' ? 'the far shell ends from a PROMPT_COMMAND' : false }, async () => {
+      const s = await open(shell);
+      // After the probe line runs, the far prompt hook reads the next line, the first of the hooks, and exits.
+      await reachFar(s, shell, { PROMPT_COMMAND: 'if [ -n "${__n-}" ]; then read -r __x; exit; fi; __n=1' });
+      const r = await s.integrate({ waitMs: 10_000 });
+      assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['hooks', 'exited'], JSON.stringify(r));
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      const f = s.front();
+      assert.equal(f.state === 'prompt' ? f.within : 'x', undefined, JSON.stringify(f));
+      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+    });
+
+    test('what a far shell prints while it takes the hooks comes back as printed: from the last typed line\'s run to its end mark', { skip: sh.name !== 'bash' ? 'xtrace is turned on through SHELLOPTS' : false }, async () => {
+      const s = await open(shell);
+      await reachFar(s, shell, { SHELLOPTS: 'xtrace' });
+      const r = await s.integrate({ waitMs: 10_000 });
+      assert.equal(r.kind, 'integrated', JSON.stringify(r));
+      const printed = r.kind === 'integrated' ? (r.printed ?? []) : [];
+      const show = JSON.stringify(printed.map((l) => l.slice(0, 120)));
+      assert.ok(printed.some((l) => /^\++ eval /.test(l)), show);
+      assert.ok(printed.some((l) => /^\++ unset __tsm_h$/.test(l)), show);
+      assert.ok(!printed.some((l) => /133;P;/.test(l)), `the last line's own trace is before its mark: ${show}`);
+      assert.ok(!printed.some((l) => /^\++ __tsm_tail$/.test(l) || l.startsWith('far>')), `nothing after the end mark: ${show}`);
+      assert.ok(!/\d{20}/.test(printed.join('\n')), 'no nonce');
+    });
   });
 }
+
+test('a probe line typed into a program a shell without integration started, which reads it and ends, stops the call by exited', async () => {
+  const s = await open('/bin/sh');
+  const r0 = await s.run('head -n 1 >/dev/null', { waitMs: 200 });
+  assert.equal(r0.kind, 'running', JSON.stringify(r0));
+  await inFront(s, /head/);
+  const r = await s.integrate({ waitMs: 10_000 });
+  assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['probe', 'exited'], JSON.stringify(r));
+});
 
 test('integrate names a shell it has no hooks for, and types nothing more', { skip: which('dash') && which('bash') ? false : 'dash and bash are both needed' }, async () => {
   const s = await open(which('bash')!);
