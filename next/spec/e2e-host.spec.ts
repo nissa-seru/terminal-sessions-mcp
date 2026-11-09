@@ -114,6 +114,55 @@ test('through the relay to a real bash: a command\'s status and output, an end n
   }
 });
 
+const reads = (text: string): string[] => [...text.matchAll(/READ:("(?:[^"\\]|\\.)*")/g)].map((m) => JSON.parse(m[1]!) as string);
+
+test('send: with text and keys, the keys reach the program in a read of their own, once output after the text is quiet', { timeout: 60_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-reads-'));
+  const reader = path.join(dir, 'reads.cjs');
+  fs.writeFileSync(reader, "process.stdin.setRawMode(true); console.log('ready'); process.stdin.on('data', (d) => { const s = d.toString(); console.log('READ:' + JSON.stringify(s)); if (s.includes('\\r')) { console.log('DONE'); process.exit(0); } });\n");
+  const h = new Host({ openSession, shell: '/bin/bash', env: configuredEnv(process.env, {}), sessionsDir: dir, startedAt: Date.now() });
+  const caller = { scope: 'r', takes: true, pushes: false };
+  try {
+    assert.equal((await h.call(caller, 'open', { name: 'r', cwd: dir })).isError, undefined);
+    const ran = await h.call(caller, 'run', { name: 'r', command: `'${process.execPath}' '${reader}'`, wait: 0 });
+    assert.equal(ran.isError, undefined, ran.text);
+    assert.match((await h.call(caller, 'look', { name: 'r', match: '^ready$', wait: 20 })).text, /ready/);
+    const text = 'x'.repeat(60);
+    const sent = await h.call(caller, 'send', { name: 'r', text, keys: ['Enter'], wait_for: '^DONE$', wait: 20 });
+    assert.equal(sent.structured.by, 'match', sent.text);
+    const got = reads(sent.text);
+    assert.equal(got.join(''), `${text}\r`, sent.text);
+    assert.equal(got.at(-1), '\r', sent.text);
+  } finally {
+    await h.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("send: when output doesn't go quiet after the text within the wait, the keys aren't sent, and the result says so", { timeout: 60_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-reads-'));
+  const reader = path.join(dir, 'ticks.cjs');
+  fs.writeFileSync(reader, "process.stdin.setRawMode(true); console.log('ready'); setInterval(() => console.log('tick'), 50); process.stdin.on('data', (d) => console.log('READ:' + JSON.stringify(d.toString())));\n");
+  const h = new Host({ openSession, shell: '/bin/bash', env: configuredEnv(process.env, {}), sessionsDir: dir, startedAt: Date.now() });
+  const caller = { scope: 't', takes: true, pushes: false };
+  try {
+    assert.equal((await h.call(caller, 'open', { name: 't', cwd: dir })).isError, undefined);
+    const ran = await h.call(caller, 'run', { name: 't', command: `'${process.execPath}' '${reader}'`, wait: 0 });
+    assert.equal(ran.isError, undefined, ran.text);
+    assert.match((await h.call(caller, 'look', { name: 't', match: '^ready$', wait: 20 })).text, /ready/);
+    const sent = await h.call(caller, 'send', { name: 't', text: 'abc', keys: ['Enter'], wait: 2 });
+    assert.equal(sent.isError, undefined, sent.text);
+    assert.equal(sent.structured.keysSent, false, sent.text);
+    assert.match(sent.text, /The keys weren't sent: output didn't stay quiet for 300 ms after the text within the wait\. `send` them alone once it does\./);
+    const found = await h.call(caller, 'read', { name: 't', match: '^READ:' });
+    assert.deepEqual(reads(found.text), ['abc'], found.text);
+    await h.call(caller, 'stop', { name: 't' });
+  } finally {
+    await h.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('send: an arrow key follows the cursor-key mode the program set', { timeout: 60_000 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-keys-'));
   const h = new Host({ openSession, shell: '/bin/bash', env: configuredEnv(process.env, {}), sessionsDir: dir, startedAt: Date.now() });

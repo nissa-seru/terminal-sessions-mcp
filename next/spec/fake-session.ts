@@ -114,7 +114,7 @@ export class FakeSession implements Session {
     return { kind: 'running', command: c, front: this.frontNow, took: [] };
   }
 
-  async send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number; take?: boolean; signal?: AbortSignal }): Promise<SendOutcome> {
+  async send(bytes: string, opts: { waitMs: number; then?: string; until?: RegExp; quietMs?: number; take?: boolean; signal?: AbortSignal }): Promise<SendOutcome> {
     this.calls.push({ method: 'send', args: [bytes, opts] });
     const from = this.out.length;
     if (this.promptUndrawn) return { sent: false, lines: this.lines(from), front: this.frontNow, ended: [], by: 'timeout', took: [] };

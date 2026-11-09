@@ -761,7 +761,7 @@ class LiveSession implements Session {
     return c.end ? { kind: 'ended', command: c, front, took: call.took } : { kind: 'running', command: c, front, took: call.took };
   }
 
-  async send(bytes: string, opts: { waitMs: number; until?: RegExp; quietMs?: number; take?: boolean; signal?: AbortSignal }): Promise<SendOutcome> {
+  async send(bytes: string, opts: { waitMs: number; then?: string; until?: RegExp; quietMs?: number; take?: boolean; signal?: AbortSignal }): Promise<SendOutcome> {
     const from = this.t.pos().line;
     const gone = (): Exit | undefined => this.exitInfo ?? this.ptyExit;
     const unsent = (by: SendOutcome['by']): SendOutcome => ({ sent: false, lines: this.t.lines(from), front: this.front(), ended: [], by, took: [] });
@@ -775,21 +775,32 @@ class LiveSession implements Session {
     }
     if (stopped()) return unsent(stopped()!);
     if (!this.prompted) this.frontKey = '';
-    if ((this.top.atPrompt || this.plain) && !this.top.submitted) {
-      if (/[\r\n]/.test(bytes)) {
-        this.top.submitted = true;
-        this.top.sentPending = undefined;
-      } else this.top.sentPending = (this.top.sentPending ?? '') + bytes;
-    }
+    const type = (b: string): number => {
+      if ((this.top.atPrompt || this.plain) && !this.top.submitted) {
+        if (/[\r\n]/.test(b)) {
+          this.top.submitted = true;
+          this.top.sentPending = undefined;
+        } else this.top.sentPending = (this.top.sentPending ?? '') + b;
+      }
+      const at = (this.lastWrite = mono());
+      this.p.write(b);
+      this.top.sentOutputs = this.outputs;
+      return at;
+    };
     const call = this.enter(opts.take ?? true, opts.signal);
-    const sentAt = (this.lastWrite = mono());
-    this.p.write(bytes);
-    this.top.sentOutputs = this.outputs;
+    let sentAt = type(bytes);
+    let thenSent: boolean | undefined;
     const scan = newScan(from);
     let matched: Match | undefined;
     let by: SendOutcome['by'] = 'timeout';
     try {
-      const r = await this.until(deadline, () => {
+      if (opts.then !== undefined) {
+        const r = await this.until(deadline, () => stopped() ?? (mono() - Math.max(this.lastOutput, sentAt) >= quiet ? ('quiet' as const) : undefined), opts.signal);
+        thenSent = r === 'quiet';
+        if (thenSent) sentAt = type(opts.then);
+        else if (r) by = r;
+      }
+      const r = thenSent === false ? undefined : await this.until(deadline, () => {
         if (this.closed) return 'closed' as const;
         if (this.exitInfo) return 'exited' as const;
         if (opts.signal?.aborted) return 'cancelled' as const;
@@ -798,14 +809,14 @@ class LiveSession implements Session {
       }, opts.signal);
       if (r) by = r;
       await this.t.settled();
-      if (by === 'timeout' && opts.until && (matched = this.searchSettled(opts.until, scan))) by = 'match';
+      if (by === 'timeout' && thenSent !== false && opts.until && (matched = this.searchSettled(opts.until, scan))) by = 'match';
     } finally {
       this.calls.delete(call);
     }
     const front = this.front();
     this.observe(front, call.take ? [call] : []);
     const screen = this.t.screen();
-    return { sent: true, lines: this.t.lines(from), ...(screen.alt && { screen }), front, ended: call.ended, ...(matched && { matched }), by, ...(opts.until && !matched && this.searched(scan)), took: call.took };
+    return { sent: true, ...(thenSent !== undefined && { thenSent }), lines: this.t.lines(from), ...(screen.alt && { screen }), front, ended: call.ended, ...(matched && { matched }), by, ...(opts.until && !matched && this.searched(scan)), took: call.took };
   }
 
   async wait(until: Until, opts: { waitMs: number; from: number; take?: boolean; signal?: AbortSignal }): Promise<WaitOutcome> {

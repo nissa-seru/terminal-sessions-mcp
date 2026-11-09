@@ -343,19 +343,22 @@ export class Host {
   }
 
   private async send(caller: Caller, e: Entry, a: Record<string, unknown>, signal: AbortSignal | undefined, held: Held): Promise<ToolResult> {
-    let bytes: string;
+    let text: string;
+    let keys: string;
     try {
-      bytes = inputBytes(a.text as string | undefined, a.keys as string[] | undefined, e.session.keyOptions());
+      text = (a.text as string | undefined) ?? '';
+      keys = inputBytes(undefined, a.keys as string[] | undefined, e.session.keyOptions());
     } catch (err) {
       if (err instanceof TermError) return refused(`\`keys\`: ${err.message}. Nothing was typed.`, { error: err.code });
       throw err;
     }
-    if (bytes === '') return refused('Nothing to send: give `text`, `keys`, or both.', { error: 'invalid_argument' });
+    if (text === '' && keys === '') return refused('Nothing to send: give `text`, `keys`, or both.', { error: 'invalid_argument' });
     const until = a.wait_for !== undefined ? this.regex(a.wait_for as string, 'wait_for', 'nothing was typed') : undefined;
-    const r = await e.session.send(bytes, { waitMs: this.waitMs(a), take: caller.takes, ...(until ? { until } : {}), ...(signal ? { signal } : {}) });
+    const both = text !== '' && keys !== '';
+    const r = await e.session.send(both ? text : text + keys, { waitMs: this.waitMs(a), ...(both ? { then: keys } : {}), take: caller.takes, ...(until ? { until } : {}), ...(signal ? { signal } : {}) });
     held.took = r.took;
     if (signal?.aborted) return this.cancelled(held);
-    if (e.closing || r.by === 'closed') return this.closed(e, held, [r.sent ? 'Its input was typed.' : 'Nothing was typed.', ...r.ended.map(endedLine)].join(' '), r.ended);
+    if (e.closing || r.by === 'closed') return this.closed(e, held, [!r.sent ? 'Nothing was typed.' : r.thenSent === false ? 'Its text was typed, and its keys weren\'t.' : 'Its input was typed.', ...r.ended.map(endedLine)].join(' '), r.ended);
     if (!r.sent && r.by === 'timeout' && r.front.state !== 'exited') {
       return refused(
         `${this.status(e, r.front)}\nNothing was typed: the shell hasn't finished drawing its prompt after ${duration(this.now() - r.front.since)}, and keys sent before a line editor has the terminal would reach the terminal's own line editing instead. ${this.waitMs(a) >= WAIT_MAX_S * 1000 ? '`look` shows what is in front.' : '`send` again with a longer `wait`.'}`,
@@ -366,11 +369,12 @@ export class Host {
     if (caller.takes && !r.screen && r.lines.from <= e.cursor) e.cursor = Math.max(e.cursor, r.lines.to - r.lines.live);
     const parts = [this.status(e, r.front)];
     for (const c of r.ended) parts.push(endedLine(c));
-    if (r.by === 'timeout') parts.push(until ? searchEndedText('send', r, false, this.unsearched(e, r)) : 'Output was still changing when the wait ended.');
+    if (r.thenSent === false) parts.push(r.by === 'exited' ? "The keys weren't sent: the shell exited after the text." : "The keys weren't sent: output didn't stay quiet for 300 ms after the text within the wait. `send` them alone once it does.");
+    else if (r.by === 'timeout') parts.push(until ? searchEndedText('send', r, false, this.unsearched(e, r)) : 'Output was still changing when the wait ended.');
     if (r.matched) parts.push(matchedText(r.matched));
     const used = parts.join('\n').length + 1;
     parts.push(r.screen ? screenText(r.screen, RESULT_MAX_CHARS - used) : this.output(r.lines, RESULT_MAX_CHARS - used));
-    return ok(parts.join('\n'), { front: r.front, by: r.by, ended: r.ended, ...(r.matched ? { matched: r.matched } : {}), lines: { from: r.lines.from, to: r.lines.to } });
+    return ok(parts.join('\n'), { front: r.front, by: r.by, ...(r.thenSent === false ? { keysSent: false } : {}), ended: r.ended, ...(r.matched ? { matched: r.matched } : {}), lines: { from: r.lines.from, to: r.lines.to } });
   }
 
   private async look(caller: Caller, e: Entry, a: Record<string, unknown>, signal: AbortSignal | undefined, held: Held): Promise<ToolResult> {
