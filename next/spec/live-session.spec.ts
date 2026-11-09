@@ -1004,8 +1004,8 @@ for (const sh of shells) {
     test('close of a shell that ignores the hangup KILLs the shell and hangs up its jobs, so a job that ignores the hangup too lives on, writing to the closed terminal', { skip: sh.name === 'fish' ? 'the hangup is ignored with bash and zsh syntax' : false }, async () => {
       const s = await open(shell, { rc: "trap '' HUP\n" });
       const ticks = path.join(lastHome(), 'ticks');
-      // The job ignores the hangup itself: a zsh subshell doesn't keep the shell's ignored HUP.
-      const c = await ran(s, `(trap '' HUP; while :; do echo tick; echo tick >> '${ticks}'; sleep 0.1; done) & echo "JOB:$!"`);
+      // The job ignores the hangup in sh, which passes the ignore on to the sleep it runs. A zsh subshell keeps the shell's ignored HUP, but the commands it runs don't.
+      const c = await ran(s, `sh -c 'trap "" HUP; while :; do echo tick; echo tick >> "$0"; sleep 0.1; done' '${ticks}' & echo "JOB:$!"`);
       const job = Number(/^JOB:(\d+)$/.exec(out(s, c).find((l) => l.startsWith('JOB:')) ?? '')?.[1]);
       assert.ok(job > 0);
       try {

@@ -902,7 +902,8 @@ class LiveSession implements Session {
     }
     const exit = this.exitInfo ?? this.ptyExit;
     this.t.dispose();
-    fs.rmSync(this.dir, { recursive: true, force: true });
+    // A process just hung up can still be writing here as it exits, so a removal that meets a file written meanwhile tries again.
+    await fs.promises.rm(this.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
     const closed: Closed = exit ? { ...exit } : { code: null, signal: 'SIGKILL', unconfirmed: true };
     if (unlisted) closed.unlisted = true;
     if (unreached.length) closed.unreached = unreached;
