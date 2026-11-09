@@ -218,6 +218,53 @@ test('send: paste reads the mode when it writes, after its wait for a prompt, an
   }
 });
 
+test('send: keys are encoded by the cursor-key mode as it stands at the write, after the wait for a prompt', { timeout: 60_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-keys-'));
+  const home = path.join(dir, 'home');
+  const gate = path.join(dir, 'gate');
+  fs.mkdirSync(home);
+  const q = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
+  fs.writeFileSync(
+    path.join(home, '.bash_profile'),
+    `bind -x '"\\eOA": echo APP_UP'\nbind -x '"\\e[A": echo NORMAL_UP'\n__hk() { if [ -e ${q(gate)} ]; then printf '\\nHOOK_WAIT\\n'; while [ -e ${q(gate)} ]; do sleep 0.01; done; printf '\\033[?1h'; fi; }\nPROMPT_COMMAND=__hk\n`,
+  );
+  let entered!: () => void;
+  const inSend = new Promise<void>((resolve) => (entered = resolve));
+  let held = false;
+  const h = new Host({
+    openSession: async (o) => {
+      const s = await openSession(o);
+      const send = s.send.bind(s);
+      s.send = (text, opts) => {
+        if (held) entered();
+        return send(text, opts);
+      };
+      return s;
+    },
+    shell: '/bin/bash',
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TERM: 'xterm-256color', LANG: 'C.UTF-8' },
+    sessionsDir: dir,
+    startedAt: Date.now(),
+  });
+  const caller = { scope: 'k', takes: true, pushes: false };
+  try {
+    assert.equal((await h.call(caller, 'open', { name: 'k', cwd: home })).isError, undefined);
+    fs.writeFileSync(gate, '');
+    const waiting = await h.call(caller, 'send', { name: 'k', text: 'true\r', wait_for: '^HOOK_WAIT$', wait: 20 });
+    assert.match(waiting.text, /HOOK_WAIT/, waiting.text);
+    held = true;
+    const sending = h.call(caller, 'send', { name: 'k', keys: ['Up'], wait_for: '^(APP|NORMAL)_UP$', wait: 20 });
+    await inSend;
+    fs.rmSync(gate);
+    const sent = await sending;
+    assert.match(sent.text, /^APP_UP$/m, sent.text);
+  } finally {
+    fs.rmSync(gate, { force: true });
+    await h.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('send: an arrow key follows the cursor-key mode the program set', { timeout: 60_000 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-keys-'));
   const h = new Host({ openSession, shell: '/bin/bash', env: configuredEnv(process.env, {}), sessionsDir: dir, startedAt: Date.now() });
