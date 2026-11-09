@@ -409,8 +409,8 @@ const escaped = (text: string): string => {
 
 /**
  * The longest piece of the hooks on one typed line. Until its line editor starts, a shell reads the terminal in canonical mode,
- * which keeps at most 1024 bytes of a line on macOS and 4095 on Linux, so the hooks go in pieces that each fit. macOS also loses
- * lines typed ahead past what it holds, so each piece is typed only once the line before it has run and printed its P mark.
+ * where macOS holds at most 1024 bytes (`getconf MAX_CANON` and `MAX_INPUT`), so the hooks go in pieces that each fit. Typed all at once,
+ * pieces arrived cut there, so each is typed only once the line before it has run and printed its P mark.
  */
 const PIECE = 768;
 
