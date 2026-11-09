@@ -1,6 +1,7 @@
 import { after, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -107,11 +108,11 @@ const exitSeen = (s: Session): unknown => {
 };
 
 async function eventually<T>(what: string, get: () => T | undefined | false, ms = 10_000): Promise<T> {
-  const until = Date.now() + ms;
+  const until = performance.now() + ms;
   for (;;) {
     const v = get();
     if (v !== undefined && v !== false) return v;
-    if (Date.now() > until) assert.fail(`${what} did not happen within ${ms} ms`);
+    if (performance.now() > until) assert.fail(`${what} did not happen within ${ms} ms`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
@@ -142,10 +143,15 @@ const flagHook = (shell: string, arm: string, flag: string): string =>
     : shell === 'zsh'
       ? `__flag() { if [[ -e '${arm}' ]]; then rm '${arm}'; : > '${flag}'; fi }\nprecmd_functions+=(__flag)\n`
       : `PROMPT_COMMAND='if [ -e "${arm}" ]; then rm "${arm}"; : > "${flag}"; fi'\n`;
+/** Which of the 1,400 `echo LEAKED_i` lines a test typed ahead are missing from `flushed`. */
+const missingLeaked = (flushed: string | undefined): number[] => {
+  const seen = new Set([...(flushed ?? '').matchAll(/LEAKED_(\d+)/g)].map((m) => Number(m[1])));
+  return Array.from({ length: 1400 }, (_, i) => i).filter((i) => !seen.has(i));
+};
 /** Holds the event loop until `file` exists, so whatever was written before it is read in one go. */
 function holdUntil(file: string, ms = 10_000): void {
-  const until = Date.now() + ms;
-  while (!fs.existsSync(file)) if (Date.now() > until) assert.fail(`${file} did not appear within ${ms} ms`);
+  const until = performance.now() + ms;
+  while (!fs.existsSync(file)) if (performance.now() > until) assert.fail(`${file} did not appear within ${ms} ms`);
 }
 /** Each event with the event loop's turn it came in. */
 function eventsByTurn(s: Session): { events: Array<{ e: SessionEvent; turn: number }>; stop: () => void } {
@@ -171,21 +177,21 @@ async function heldAfter(s: Session, gate: string, text: string, via: 'run' | 's
 }
 
 async function inFront(s: Session, pattern: RegExp, ms = 8000): Promise<void> {
-  const until = Date.now() + ms;
+  const until = performance.now() + ms;
   for (;;) {
     const f = s.front();
     if ((f.state === 'running' || f.state === 'waiting') && pattern.test(f.process.argv)) return;
-    if (Date.now() > until) assert.fail(`nothing matching ${pattern} came in front: ${JSON.stringify(f)}`);
+    if (performance.now() > until) assert.fail(`nothing matching ${pattern} came in front: ${JSON.stringify(f)}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
 
 async function pendingIs(s: Session, text: string, ms = 5000): Promise<void> {
-  const until = Date.now() + ms;
+  const until = performance.now() + ms;
   for (;;) {
     const f = s.front();
     if (f.state === 'prompt' && f.pending === text) return;
-    if (Date.now() > until) assert.fail(`the prompt never showed ${JSON.stringify(text)} pending: ${JSON.stringify(f)}`);
+    if (performance.now() > until) assert.fail(`the prompt never showed ${JSON.stringify(text)} pending: ${JSON.stringify(f)}`);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }
@@ -850,7 +856,7 @@ for (const sh of shells) {
       await s.send(typed, { waitMs: 300, quietMs: 100 });
       fs.rmSync(gate);
       assert.equal((await s.wait({ kind: 'end' }, { waitMs: 20_000, from: 0 })).by, 'end');
-      assert.ok(r.kind === 'running' && r.command.end?.flushed?.includes('LEAKED_1399'), JSON.stringify(r.kind === 'running' && r.command.end?.flushed?.length));
+      assert.deepEqual(missingLeaked(r.kind === 'running' ? r.command.end?.flushed : undefined), [], 'every line typed ahead came back');
       assert.deepEqual(out(s, await ran(s, 'echo AFTER')), ['AFTER']);
       assert.ok(!s.lines(0).lines.some((l) => /^LEAKED_\d+$/.test(l)));
     });
@@ -1345,7 +1351,7 @@ for (const sh of shells) {
       });
       try {
         const pgid = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).trim());
-        if (pgid !== pid) return t.skip('this sudo runs its command in its own group');
+        if (pgid !== pid) return t.skip("this sudo doesn't run its command in a group of its own");
         const exit = await s.close({ force: true, deadline: by() });
         assert.ok(exit.unreached?.some((u) => u.pgid === pgid && u.signal === 'SIGKILL' && u.error === 'EPERM'), JSON.stringify(exit));
       } finally {
@@ -1434,7 +1440,7 @@ for (const sh of shells) {
       assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
     });
 
-    test('nothing from the session after the probe line reaches a history file the far shell saves as it goes', async (t) => {
+    test('of what the session types, only the probe line, and in zsh the line that turns saving off, reach a history file the far shell saves as it goes', async (t) => {
       const s = await open(shell);
       const home = lastHome();
       const file = sh.name === 'fish' ? path.join(home, 'far-data', 'fish', 'fish_history') : path.join(home, 'far-history');
@@ -1518,7 +1524,7 @@ for (const sh of shells) {
       fs.rmSync(gate);
       assert.equal((await s.wait({ kind: 'end' }, { waitMs: 20_000, from: 0 })).by, 'end');
       const c = s.command(r.kind === 'running' ? r.command.id : -1);
-      assert.ok(c?.end?.flushed?.includes('LEAKED_1399'), JSON.stringify({ end: { ...c?.end, flushed: c?.end?.flushed?.length }, front: s.front(), tail: s.lines(Math.max(0, s.lines(0).to - 12)).lines.map((l) => l.slice(0, 100)) }));
+      assert.deepEqual(missingLeaked(c?.end?.flushed), [], JSON.stringify({ end: { ...c?.end, flushed: c?.end?.flushed?.length }, front: s.front() }));
       assert.deepEqual(out(s, await ran(s, 'echo AFTER')), ['AFTER']);
       assert.ok(!s.lines(0).lines.some((l) => /^LEAKED_\d+$/.test(l)));
     });
@@ -1642,7 +1648,9 @@ for (const sh of shells) {
       const from = s.lines(0).to - 1;
       const w = await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from });
       assert.equal(w.by, 'match', 'the probe line ran');
-      await s.wait({ kind: 'match', pattern: /eval/ }, { waitMs: 500, from });
+      // The call has returned, so nothing more is typed for it. A line typed now comes after anything the session typed before.
+      const marker = await s.send('echo AFTER-PROBE\r', { waitMs: 5000, until: /^AFTER-PROBE$/ });
+      assert.equal(marker.by, 'match');
       assert.ok(!s.lines(from).lines.some((l) => l.includes('eval')), 'no hooks were typed');
       assert.equal(s.front().state, 'running');
       assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
@@ -1782,12 +1790,14 @@ test('close that runs out of time while ps lists logs how long ps had', darwinOn
   const logs: string[] = [];
   const s = await open(which('bash') ?? '/bin/bash', { log: (l) => logs.push(l) });
   const job = pidOf(s, await ran(s, 'sleep 300 & echo "JOB:$!"'), 'JOB');
-  const fake = fakePs('*"-t "*) exec sleep 300;;');
+  const reached = path.join(tmp, `reached-${++gates}`);
+  const fake = fakePs(`*"-t "*) : > '${reached}'; exec sleep 300;;`);
   const keep = process.env.PATH;
   try {
     process.env.PATH = `${fake}:${keep}`;
     const exit = await s.close({ force: true, deadline: by(3000) });
     process.env.PATH = keep;
+    assert.ok(fs.existsSync(reached), 'the ps that never answers was reached');
     assert.equal(exit.unlisted, true, JSON.stringify(exit));
     assert.match(logs.join('\n'), /close couldn't list the processes on the terminal: ps took longer than \d+ ms/);
   } finally {
@@ -1809,12 +1819,181 @@ test('close returns at its deadline though the ps it waits on outlives the signa
     const ended = await Promise.race([closing.then(() => 'closed'), new Promise<string>((resolve) => setTimeout(() => resolve('still waiting'), 20_000))]);
     process.env.PATH = keep;
     assert.equal(ended, 'closed');
+    assert.ok(fs.existsSync(held), 'the ps that outlives TERM was reached and started its child');
     const exit = await closing;
     assert.equal(exit.unlisted, true, JSON.stringify(exit));
     assert.match(logs.join('\n'), /close couldn't list the processes on the terminal: ps took longer than \d+ ms/);
   } finally {
     process.env.PATH = keep;
     if (fs.existsSync(held)) killPid(Number(fs.readFileSync(held, 'utf8')));
+    killPid(job);
+  }
+});
+
+test('close of a shell that had already exited says what it left running may live on', async () => {
+  const logs: string[] = [];
+  const s = await open(which('bash') ?? '/bin/bash', { log: (l) => logs.push(l) });
+  const r = await s.run('sleep 300 & echo "JOB:$!"; disown; exit', { waitMs: 10_000 });
+  assert.notEqual(r.kind, 'refused', JSON.stringify(r));
+  await eventually('the shell exited', () => s.front().state === 'exited');
+  const job = Number(/JOB:(\d+)/.exec(s.lines(0).lines.join('\n'))?.[1]);
+  try {
+    const exit = await s.close({ deadline: by() });
+    assert.equal(exit.unlisted, true, JSON.stringify(exit));
+    assert.match(logs.join('\n'), /the shell had already exited/);
+  } finally {
+    if (job > 0) killPid(job);
+  }
+});
+
+test("a /proc read that fails for a reason other than the process being gone fails close's listing, rather than leaving that process out", { skip: process.platform !== 'linux' ? 'only Linux lists from /proc' : false }, async () => {
+  const logs: string[] = [];
+  const s = await open(which('bash') ?? '/bin/bash', { log: (l) => logs.push(l) });
+  const job = pidOf(s, await ran(s, 'sleep 300 & echo "JOB:$!"; disown'), 'JOB');
+  const hidden = `/proc/${job}/stat`;
+  const real = fs.readFileSync;
+  const patched = ((p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (p === hidden) throw Object.assign(new Error(`EACCES: permission denied, open '${hidden}'`), { code: 'EACCES' });
+    return (real as (...a: unknown[]) => unknown)(p, ...rest);
+  }) as typeof fs.readFileSync;
+  const fsModule = (await import('node:fs')).default;
+  fsModule.readFileSync = patched;
+  syncBuiltinESMExports();
+  try {
+    const exit = await s.close({ deadline: by() });
+    fsModule.readFileSync = real;
+    syncBuiltinESMExports();
+    assert.equal(exit.unlisted, true, JSON.stringify(exit));
+    assert.match(logs.join('\n'), new RegExp(`/proc/${job}/stat couldn't be read: EACCES`));
+  } finally {
+    fsModule.readFileSync = real;
+    syncBuiltinESMExports();
+    killPid(job);
+  }
+});
+
+test('a write to the terminal that throws leaves no call open behind it', async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const pty = (s as unknown as { p: { write: (d: string) => void } }).p;
+  const write = pty.write;
+  pty.write = () => {
+    throw new Error('EIO');
+  };
+  try {
+    await assert.rejects(s.run('echo x', { waitMs: 1000 }), /EIO/);
+    await assert.rejects(s.send('x', { waitMs: 1000 }), /EIO/);
+  } finally {
+    pty.write = write;
+  }
+  assert.equal((s as unknown as { calls: Set<unknown> }).calls.size, 0);
+});
+
+test('a line break inside a paste at a prompt is held for editing, so the shell is still at its prompt', async (t) => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const r = await s.send('echo one\necho two', { waitMs: 3000, paste: true });
+  if (!r.sent && r.by === 'paste_off') return t.skip("this bash's line editor doesn't turn bracketed paste on");
+  assert.equal(r.sent, true, JSON.stringify(r));
+  const f = s.front();
+  assert.equal(f.state, 'prompt', JSON.stringify(f));
+  assert.equal((await s.run('echo x', { waitMs: 1000 })).kind, 'refused', 'the pasted text is pending at the prompt');
+});
+
+test("a shell that exits with the alternate screen up keeps that screen in its last command's output", async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  // The command line holds "ALT SHOWN"; only the screen it draws holds "ALT-SHOWN".
+  const r = await s.run(`printf '\\033[?1049h\\033[H%s-%s\\n' ALT SHOWN; exit 3`, { waitMs: 10_000 });
+  await eventually('the shell exited', () => s.front().state === 'exited');
+  const c = s.command(r.kind === 'refused' ? -1 : r.command.id);
+  assert.ok(c?.end, JSON.stringify(r));
+  assert.ok(s.lines(c.from, c.to).lines.some((l) => l.includes('ALT-SHOWN')), JSON.stringify(s.lines(0).lines));
+});
+
+test('a ps that exits 1 with a message is a failed check, not a listing of nothing, so close signals none and says so', darwinOnly, async () => {
+  const logs: string[] = [];
+  const s = await open(which('bash') ?? '/bin/bash', { log: (l) => logs.push(l) });
+  const job = pidOf(s, await ran(s, 'sleep 300 & echo "JOB:$!"; disown'), 'JOB');
+  const fake = fakePs(`*stat=*) echo 'ps: cannot read the process table' >&2; exit 1;;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    const exit = await s.close({ deadline: by() });
+    process.env.PATH = keep;
+    assert.equal(exit.unlisted, true, JSON.stringify(exit));
+    assert.match(logs.join('\n'), /ps exited with status 1: ps: cannot read the process table/);
+    assert.equal(gone(job), false, 'the disowned job was left alone');
+  } finally {
+    process.env.PATH = keep;
+    killPid(job);
+  }
+});
+
+test('a synchronous ps that ignores TERM is killed at its timeout, so front returns without waiting for it', darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const finished = path.join(tmp, `finished-${++gates}`);
+  // Twenty seconds of a loop that ignores TERM, then a mark that it ran to its end. KILL ends it before the mark.
+  const fake = fakePs(`*tpgid=*) trap '' TERM; i=0; while [ $i -lt 200 ]; do sleep 0.1; i=$((i+1)); done; : > '${finished}'; exit 1;;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    const f = s.front();
+    process.env.PATH = keep;
+    assert.equal(f.state, 'prompt');
+    assert.equal(fs.existsSync(finished), false, 'front returned before the ps that ignores TERM ran to its end');
+  } finally {
+    process.env.PATH = keep;
+  }
+});
+
+test('stop sends nothing more once a close has begun', darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const r = await s.run(`sh -c "trap '' INT; sleep 300"`, { waitMs: 300 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  await eventually('the job in front', () => {
+    const now = s.front();
+    return now.state === 'running' && !now.process.shell && now;
+  });
+  const gate = path.join(tmp, `gate-${++gates}`);
+  const fake = fakePs(`*"-t "*) while [ ! -e '${gate}' ]; do sleep 0.05; done;;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    // stop types C-c before its first wait, which the job ignores; close then holds at its listing, with the shell still up.
+    const stopping = s.stop();
+    const closing = s.close({ deadline: by() });
+    const stopped = await stopping;
+    assert.deepEqual(stopped.steps.map((x) => x.sent), ['C-c']);
+    fs.writeFileSync(gate, '');
+    await closing;
+  } finally {
+    process.env.PATH = keep;
+    fs.writeFileSync(gate, '');
+  }
+});
+
+test('a second close waits for the first, which hangs up what it listed once the shell is gone', darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const job = pidOf(s, await ran(s, 'sleep 300 & echo "JOB:$!"; disown'), 'JOB');
+  const gate = path.join(tmp, `gate-${++gates}`);
+  const held = path.join(tmp, `held-${++gates}`);
+  const fake = fakePs(`*stat=*) : > '${held}'; while [ ! -e '${gate}' ]; do sleep 0.05; done;;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    const first = s.close({ deadline: by() });
+    await eventually('the check before the hangup is held, after the shell has gone', () => fs.existsSync(held));
+    let released = false;
+    const second = s.close({ deadline: by() }).then(() => released);
+    // Long enough for a close that doesn't wait to have returned; the green doesn't rest on it, since the gate holds the first.
+    await Promise.race([second, new Promise((resolve) => setTimeout(resolve, 1000))]);
+    released = true;
+    fs.writeFileSync(gate, '');
+    assert.equal(await second, true, 'the second close returned only once the first was let go');
+    await first;
+    process.env.PATH = keep;
+    await eventually('the disowned job is gone', () => gone(job));
+  } finally {
+    process.env.PATH = keep;
+    fs.writeFileSync(gate, '');
     killPid(job);
   }
 });
