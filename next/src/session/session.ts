@@ -935,7 +935,7 @@ export const openSession: OpenSession = async (o) => {
   try {
     fs.accessSync(o.shell, fs.constants.X_OK);
   } catch {
-    throw err('backend_failure', `the shell ${o.shell} cannot be run`);
+    throw err('backend_failure', `the shell ${o.shell} cannot be run. The daemon chose it when it started. Whoever runs the daemon can restart it, which chooses the shell again`);
   }
   const bash = findBash();
   if (!bash) throw err('backend_failure', 'this host has no bash, which closes the descriptors a shell would otherwise inherit from the daemon. Sessions open here once bash is installed');

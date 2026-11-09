@@ -184,7 +184,7 @@ export class Transcript {
   /** How the partial line meets the first unfrozen row: it continues there, or it ended and stands apart. */
   private head(from: number): 'joins' | 'apart' | undefined {
     if (!this.partial) return undefined;
-    return this.term.buffer.normal.getLine(from)?.isWrapped ? 'joins' : 'apart';
+    return this.wraps(from) ? 'joins' : 'apart';
   }
 
   private withPartial(from: number, lines: string[]): string[] {
@@ -288,7 +288,7 @@ export class Transcript {
     for (let i = from; i <= to; i++) {
       const row = b.getLine(i);
       if (!row) continue;
-      const last = !b.getLine(i + 1)?.isWrapped;
+      const last = !this.wraps(i + 1);
       const starts = [0, ...(splitAt.get(i) ?? []).sort((x, y) => x - y)];
       starts.forEach((start, k) => {
         const stop = starts[k + 1];
@@ -324,11 +324,10 @@ export class Transcript {
   }
 
   private freezeThrough(upto: number): number {
-    const b = this.term.buffer.normal;
     const from = this.firstLine();
     if (upto < from) return from;
     const lines = this.withPartial(from, this.walk(from, upto).lines);
-    this.partial = b.getLine(upto + 1)?.isWrapped ? (lines.pop() ?? '') : '';
+    this.partial = this.wraps(upto + 1) ? (lines.pop() ?? '') : '';
     for (const l of lines) this.push(this.io.redact(l));
     if (this.partial.length > MAX_LINE) {
       // A text to redact whose head ends the partial goes on in the next row, so redacting the partial
@@ -366,6 +365,15 @@ export class Transcript {
     this.at = onRow ? this.term.registerMarker(row - b.cursorY) : undefined;
     this.above = row - 1 >= -b.baseY ? this.term.registerMarker(row - 1 - b.cursorY) : undefined;
     this.anchored = true;
+  }
+
+  /**
+   * Whether row `i` of the normal buffer goes on from the row above it. A row past the buffer's end
+   * goes on from nothing: once the scrollback is full, `getLine` there returned a wrapped row.
+   */
+  private wraps(i: number): boolean {
+    const b = this.term.buffer.normal;
+    return i < b.length && Boolean(b.getLine(i)?.isWrapped);
   }
 
   private lastRow(): number {

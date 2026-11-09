@@ -1036,6 +1036,16 @@ for (const sh of shells) {
       assert.equal(out(s, c).join(''), `${'x'.repeat(65_533)}[redacted]..........xxxx`);
     });
 
+    test('the line at the cursor is not padded to the screen\'s width once the emulator\'s rows are full', { skip: sh.name !== 'bash' ? 'the transcript is the same in every shell' : false }, async () => {
+      const s = await open(shell);
+      // 20,000 characters fill 200 rows at 100 columns, more than the emulator keeps. So every row it
+      // still keeps, but the prompt's, goes on from the row above.
+      await ran(s, "head -c 20000 /dev/zero | tr '\\0' x; echo", 30_000);
+      const screen = s.screen();
+      const all = s.lines(0).lines;
+      assert.equal(all[all.length - 1], screen.rows[screen.cursor.row]);
+    });
+
     test('a wait cancelled after a command ended returns that end among what it took', async () => {
       const s = await open(shell);
       const gate = newGate();
