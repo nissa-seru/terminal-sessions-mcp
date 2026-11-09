@@ -65,7 +65,7 @@ export class Transcript {
       reply: (data: string) => void;
       pressure: (paused: boolean) => void;
       redact: (text: string) => string;
-      /** The longest text `redact` replaces. It replaces only whole texts, so a freeze keeps this much of a partial line's end unfrozen. */
+      /** The longest text `redact` replaces. It replaces only whole texts, so a freeze keeps a partial line's last redactSpan - 1 characters unfrozen. */
       redactSpan: number;
       /** A mark's payload, as the parser meets it. Return true to start a new line there. */
       mark: (payload: string, at: Pos) => boolean;
