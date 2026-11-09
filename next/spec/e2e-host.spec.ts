@@ -229,7 +229,7 @@ test('send: paste reads the mode when it writes, after its wait for a prompt, an
 });
 
 test('send: keys are encoded by the cursor-key mode as it stands at the write, after the wait for a prompt', { timeout: 60_000 }, async () => {
-  const g = gatedBash({ extra: `bind -x '"\\eOA": echo APP_UP'\nbind -x '"\\e[A": echo NORMAL_UP'\n`, before: '', after: '\\033[?1h' });
+  const g = gatedBash({ extra: `bind '"\\eOA": "echo APP_UP\\n"'\nbind '"\\e[A": "echo NORMAL_UP\\n"'\n`, before: '', after: '\\033[?1h' });
   try {
     await g.hold();
     const sent = await g.call('send', { keys: ['Up'], wait_for: '^(APP|NORMAL)_UP$', wait: 20 });
