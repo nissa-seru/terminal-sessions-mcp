@@ -56,11 +56,27 @@ function psSync(args: string[], timeoutMs: number): Spawned {
 
 function psAsync(args: string[], timeoutMs: number): Promise<Spawned> {
   return new Promise((resolve) => {
-    execFile('ps', args, { encoding: 'utf8', timeout: timeoutMs }, (e, stdout) => {
-      if (!e) return resolve({ status: 0, stdout, timedOut: false });
+    let timer: NodeJS.Timeout | undefined;
+    let settled = false;
+    const settle = (s: Spawned): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(s);
+    };
+    const child = execFile('ps', args, { encoding: 'utf8' }, (e, stdout) => {
+      if (!e) return settle({ status: 0, stdout, timedOut: false });
       const x = e as ExecFileException;
-      resolve({ status: typeof x.code === 'number' ? x.code : null, stdout: typeof stdout === 'string' ? stdout : '', timedOut: x.killed === true, error: x.message.split('\n')[0]! });
+      settle({ status: typeof x.code === 'number' ? x.code : null, stdout: typeof stdout === 'string' ? stdout : '', timedOut: false, error: x.message.split('\n')[0]! });
     });
+    // execFile's own timeout only signals the child, and its callback waits for the child to exit, which a child that outlives the
+    // signal never does.
+    timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      settle({ status: null, stdout: '', timedOut: true });
+    }, timeoutMs);
   });
 }
 
