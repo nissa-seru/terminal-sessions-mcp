@@ -103,9 +103,21 @@ else:
 report['listed'] = listed
 
 t0 = time.time()
-os.kill(pid, signal.SIGHUP)
-_, status = os.waitpid(pid, 0)
-report['shell_exit'] = {'status': status, 'ms': round((time.time() - t0) * 1000)}
+status, hups, killed = None, 0, False
+while status is None:
+    if time.time() - t0 < 2:
+        os.kill(pid, signal.SIGHUP)  # resent, as close does: a shell can defer one that lands before it reads
+        hups += 1
+    elif not killed:
+        os.kill(pid, signal.SIGKILL)
+        killed = True
+    for _ in range(50):
+        p, st = os.waitpid(pid, os.WNOHANG)
+        if p:
+            status = st
+            break
+        time.sleep(0.01)
+report['shell_exit'] = {'status': status, 'ms': round((time.time() - t0) * 1000), 'hups': hups, 'killed': killed}
 time.sleep(1.0)
 report['after_1s'] = {k: stat(v) for k, v in jobs.items() if v}
 if LINUX:
