@@ -372,6 +372,7 @@ class LiveSession implements Session {
         this.drop(i - 1, { by: by.argv, how: h });
         return undefined;
       }
+      break;
     }
     return w === undefined ? undefined : 'held';
   }
