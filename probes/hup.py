@@ -38,7 +38,10 @@ if pid == 0:
     os.environ['PS1'] = 'P> '
     os.execv(SHELL, [SHELL, '--norc', '--noprofile', '-i'] if SHELL.endswith('bash') else [SHELL, '-f', '-i'])
 
+import fcntl, struct, termios
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
 read_until(fd, rb'P> ')
+raw = {}
 cmds = [
     ('normal', 'sleep 601 & echo J=normal:$!'),
     ('disowned', 'sleep 602 & echo J=disowned:$!; disown'),
@@ -54,6 +57,8 @@ for name, c in cmds:
     out = read_until(fd, rb'J=' + name.encode() + rb':(\d+)')
     m = re.search(rb'J=' + name.encode() + rb':(\d+)', out)
     jobs[name] = int(m.group(1)) if m else None
+    if not m:
+        raw[name] = out[-400:].decode('utf8', 'replace')
     read_until(fd, rb'P> ', 2)
 time.sleep(0.5)
 
@@ -61,7 +66,7 @@ shell_tty = None
 if not LINUX:
     shell_tty = subprocess.run(['ps', '-o', 'tty=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
 
-report = {'platform': sys.platform, 'shell': SHELL, 'shell_pid': pid, 'shell_stat': stat(pid), 'shell_tty': shell_tty, 'jobs': jobs, 'before': {k: stat(v) for k, v in jobs.items() if v}}
+report = {'raw_unmatched': raw, 'platform': sys.platform, 'shell': SHELL, 'shell_pid': pid, 'shell_stat': stat(pid), 'shell_tty': shell_tty, 'jobs': jobs, 'before': {k: stat(v) for k, v in jobs.items() if v}}
 if not LINUX:
     for args in (['-t', shell_tty], ['-t', shell_tty.replace('tty', '')]):
         r = subprocess.run(['ps', *args, '-o', 'pid=,pgid=,command='], capture_output=True, text=True)
