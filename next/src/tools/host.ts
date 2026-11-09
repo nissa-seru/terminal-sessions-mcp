@@ -479,10 +479,8 @@ export class Host {
     const k = keyOf(e.scope, e.name);
     if (this.entries.get(k) === e) this.entries.delete(k);
     const how = exit.unconfirmed ? `was sent ${exit.signal ?? 'SIGKILL'}, and its exit wasn't seen within the grace after it` : exitText(exit);
-    const unlisted = exit.unlisted ? " Not everything it started could be listed, so some of it may live on." : '';
-    const unreached = exit.unreached?.length
-      ? ` ${exit.unreached[0]!.signal === 'SIGHUP' ? 'The hangup' : 'KILL'} didn't reach ${exit.unreached.map((g) => `group ${g.pgid} (${g.error})`).join(', ')}, whose processes may live on.`
-      : '';
+    const unlisted = exit.unlisted ? " The session couldn't list every process it started, so jobs it started may live on." : '';
+    const unreached = exit.unreached?.length ? ` These signals weren't delivered: ${exit.unreached.map((g) => `${g.signal} to group ${g.pgid} (${g.error})`).join(', ')}. Their processes may live on.` : '';
     return ok(`[${e.name} · closed]\nThe shell ${how}.${unlisted}${unreached}${unseen.length ? `\n\nNot yet seen:\n${unseen.join('\n')}` : ''}`, { session: e.name, exit, ...(unseen.length ? { unseen } : {}) });
   }
 
