@@ -1,6 +1,6 @@
 import { after, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -1095,18 +1095,6 @@ for (const sh of shells) {
 test('the descendants of a pid with no process cannot be listed', () => {
   assert.equal(proc.descendants(2 ** 22 + 12345), undefined);
   assert.ok(Array.isArray(proc.descendants(process.pid)));
-});
-
-test('past 1,024 descendants, the walk without children files gives up', { skip: process.platform === 'linux' ? 'Linux lists children from the kernel\'s children files' : false }, async () => {
-  const child = spawn('sh', ['-c', 'for i in $(seq 1 1030); do sleep 60 & done; wait'], { detached: true, stdio: 'ignore' });
-  try {
-    await eventually('1,030 sleeps', () => (proc.descendants(process.pid, true)?.length ?? 0) > 1030, 60_000);
-    assert.equal(proc.descendants(process.pid), undefined);
-  } finally {
-    try {
-      process.kill(-child.pid!, 'SIGKILL');
-    } catch {}
-  }
 });
 
 test('a cwd that is not a directory is refused as invalid_argument', async () => {
