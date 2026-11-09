@@ -2268,6 +2268,28 @@ test("a command in a far shell reached from another far shell, which ends there,
   await s.close({ force: true, deadline: by() });
 });
 
+test("a far shell's carrier whose own process ends, while its group goes on with another program, is no longer followed, and run types nothing into that program", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open('/bin/sh');
+  const capture = path.join(tmp, `capture-${++gates}`);
+  const from = s.lines(0).to - 1;
+  // Without job control, sh -c runs script in its own group, then becomes cat in that same group.
+  const r = await s.run(`sh -c '${relayed(which('bash')!)}; exec cat > "${capture}"'`, { waitMs: 200 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  assert.equal((await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from })).by, 'match');
+  assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+  const w = proc.info(s.pid)?.tpgid ?? 0;
+  const carrier = (proc.descendants(s.pid, true) ?? []).find((d) => d.pgrp === w && /script/.test(proc.argv(d.pid) ?? ''));
+  assert.ok(w > 0 && carrier, JSON.stringify({ w, carrier }));
+  // SIGTERM would reach the far bash, which ignores it, and script would wait for it. Once script is gone, its terminal hangs up the far bash.
+  process.kill(carrier!.pid, 'SIGKILL');
+  await eventually('the group goes on as cat', () => proc.groupAlive(w) && /^cat\b/.test(proc.argv(w) ?? '') && proc.info(s.pid)?.tpgid === w);
+  const f = s.front();
+  assert.ok(f.state === 'waiting' ? /cat/.test(f.process.argv) : f.state === 'running' && f.within === undefined, JSON.stringify(f));
+  assert.equal((await s.run('echo MUST_NOT_REACH_CAT', { waitMs: 300 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+  assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
+});
+
 test("a far command whose carrier is suspended is no longer followed, and its end says the carrier left the terminal, not that it ended", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open('/bin/sh');
   const w = await farThen(s, 'true');
