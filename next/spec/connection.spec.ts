@@ -343,7 +343,7 @@ test('a cancelled call stops its wait, and is answered to nobody', async () => {
       new Promise((resolve) => {
         opts.signal?.addEventListener('abort', () => {
           aborted = true;
-          resolve({ by: 'cancelled', front: s.frontNow, ended: [] });
+          resolve({ by: 'cancelled', front: s.frontNow, ended: [], took: [] });
         });
       });
     c.send({ jsonrpc: '2.0', id: 'w', method: 'tools/call', params: { name: 'look', arguments: { name: 'main', until: 'end', wait: 30 } } });

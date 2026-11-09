@@ -895,7 +895,7 @@ test("the host says what the session reports of a match on the screen, an undeli
   assert.match(wakes.find((w) => w.tag === 'terminal:match')!.text, /\nMatched on the screen, row 3: ALT-READY$/);
   s.stop = async () => ({ steps: [{ sent: 'SIGTERM', to: { pgid: 9, argv: 'sudo -n sleep 9', shell: false }, refused: 'EPERM', front: s.frontNow }], front: s.frontNow });
   assert.match((await host.call(agent(), 'stop', { name: 'main' })).text, /\nSIGTERM wasn't delivered to sudo -n sleep 9 \(EPERM\), so no further step was taken: now /);
-  s.send = async () => ({ sent: true, lines: s.lines(s.out.length), front: s.frontNow, ended: [], by: 'timeout', clipped: 2 });
+  s.send = async () => ({ sent: true, lines: s.lines(s.out.length), front: s.frontNow, ended: [], by: 'timeout', clipped: 2, took: [] });
   assert.match((await host.call(agent(), 'send', { name: 'main', text: 'x', wait_for: 'never', wait: 1 })).text, /\nThe wait ended before the pattern matched; 2 lines longer than the match window, searched on their head only\./);
   s.frontNow = { state: 'waiting', since: Date.now(), process: { pgid: 9, argv: 'read', shell: false } };
   assert.match((await host.call(agent(), 'list', {})).text, /waiting for input: read, echo unknown, for /);
@@ -911,14 +911,14 @@ test('a search the wait ended before it reached the end says how many lines it n
   const { host, opened } = setup();
   await host.call(agent(), 'open', { name: 'main' });
   const s = opened[0]!;
-  s.send = async () => ({ sent: true, lines: s.lines(s.out.length), front: s.frontNow, ended: [], by: 'timeout', unsearched: 1200, clipped: 3 });
+  s.send = async () => ({ sent: true, lines: s.lines(s.out.length), front: s.frontNow, ended: [], by: 'timeout', unsearched: 1200, clipped: 3, took: [] });
   const sent = await host.call(agent(), 'send', { name: 'main', text: 'x', wait_for: 'DONE', wait: 5 });
   assert.match(sent.text, /\nThe wait ended with 1200 lines not yet searched, and no match in those it searched; 3 lines longer than the match window, searched on their head only\. `look` again with a longer `wait` searches them, or `read` with `match` searches a range of `lines`\./);
   const longest = await host.call(agent(), 'send', { name: 'main', text: 'x', wait_for: 'DONE', wait: 55 });
   assert.match(longest.text, /no match in those it searched; 3 lines .* head only\. `read` with `match` searches a range of `lines`\./);
-  s.wait = async () => ({ by: 'timeout', front: s.frontNow, ended: [], unsearched: 1 });
+  s.wait = async () => ({ by: 'timeout', front: s.frontNow, ended: [], unsearched: 1, took: [] });
   assert.match((await host.call(cli(), 'look', { name: 'main', match: 'DONE', wait: 5 })).text, /\nThe wait ended with 1 line not yet searched, and no match in those it searched\. `look` again with a longer `wait` searches them/);
   assert.match((await host.call(agent(), 'look', { name: 'main', match: 'DONE', wait: 5 })).text, /\nThe wait ended with 1 line not yet searched, and no match in those it searched\. The match will be reported to you when it comes\./);
-  s.wait = async () => ({ by: 'timeout', front: s.frontNow, ended: [] });
+  s.wait = async () => ({ by: 'timeout', front: s.frontNow, ended: [], took: [] });
   assert.match((await host.call(agent(), 'look', { name: 'main', match: 'DONE', wait: 5 })).text, /\nThe wait ended first\. The match will be reported to you when it comes\./);
 });
