@@ -36,7 +36,7 @@ def read_until(fd, pat, timeout=10):
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['PS1'] = 'P> '
-    os.execv(SHELL, [SHELL, '--norc', '--noprofile', '-i'] if SHELL.endswith('bash') else [SHELL, '-i'])
+    os.execv(SHELL, [SHELL, '--norc', '--noprofile', '-i'] if SHELL.endswith('bash') else [SHELL, '-f', '-i'])
 
 read_until(fd, rb'P> ')
 cmds = [
@@ -80,6 +80,27 @@ else:
     report['on_tty'] = sorted(on_tty)
     report['in_session'] = sorted(in_sess)
 
+def group_of(p):
+    s = stat(p)
+    if s is None:
+        return None
+    if LINUX:
+        return s['pgrp']
+    f = s.split()
+    return int(f[2])
+
+
+# what the planned close would list: every process on the shell's terminal but the shell, with its group
+if LINUX:
+    t = time.time()
+    listed = {p: stat(p)['pgrp'] for p in report['on_tty'] if p != pid and stat(p)}
+    report['list_ms'] = round((time.time() - t) * 1000, 1)
+    report['proc_count'] = sum(1 for d in os.listdir('/proc') if d.isdigit())
+else:
+    out = report['ps -t ' + shell_tty]['out']
+    listed = {int(l.split()[0]): int(l.split()[1]) for l in out if l.strip() and int(l.split()[0]) != pid}
+report['listed'] = listed
+
 t0 = time.time()
 os.kill(pid, signal.SIGHUP)
 _, status = os.waitpid(pid, 0)
@@ -89,11 +110,24 @@ report['after_1s'] = {k: stat(v) for k, v in jobs.items() if v}
 if LINUX:
     in_sess = [int(d) for d in os.listdir('/proc') if d.isdigit() and (stat(int(d)) or {}).get('sid') == pid]
     report['in_session_after'] = sorted(in_sess)
+
+# the planned post-death step: HUP, then CONT, each listed group that still has a listed member in it
+sent = []
+for g in sorted(set(listed.values())):
+    if any(group_of(p) == g for p, lg in listed.items() if lg == g):
+        for sig in (signal.SIGHUP, signal.SIGCONT):
+            try:
+                os.killpg(g, sig)
+                sent.append((g, sig.name, 'ok'))
+            except OSError as e:
+                sent.append((g, sig.name, e.__class__.__name__))
+report['sent'] = sent
+time.sleep(1.0)
+report['after_fix_1s'] = {k: (stat(v) is not None) for k, v in jobs.items() if v}
 for v in jobs.values():
     if v:
-        for s in (signal.SIGKILL,):
-            try:
-                os.kill(v, s)
-            except ProcessLookupError:
-                pass
+        try:
+            os.kill(v, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 print(json.dumps(report, indent=1))
