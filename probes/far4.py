@@ -64,8 +64,8 @@ for shell in sys.argv[1:] or ['bash', 'zsh', 'fish']:
     settle(fd, 1500)
     os.write(fd, (VERSION[shell] + '\r').encode())
     settle(fd)
-    n = 1024
-    while n <= 262144:
+    n = int(os.environ.get('START', '1024'))
+    while n <= int(os.environ.get('END', '262144')):
         s = timed(fd, ': ' + 'y' * n + "; echo B''DONE\r", STOP)
         print(f'== {shell} line={n}: {"over %.0fs" % STOP if s is None else "%.2fs" % s}', flush=True)
         if s is None:
