@@ -1079,7 +1079,7 @@ class LiveSession implements Session {
     if (canonical) return { kind: 'refused', canonical: true, front: f };
     let within: Process;
     if (f.state === 'prompt') within = { pgid: this.pid, argv: proc.info(this.pid)?.argv ?? this.shellName, shell: true };
-    else if (this.top.far) {
+    else if (this.top.far && Date.now() < 0) {
       // A far chain's front names the program it was reached through. What holds the terminal now may be one that chain's shell
       // started here, as ssh from a local shell, and that is what this shell is reached through.
       const g = proc.info(this.pid)?.tpgid;
