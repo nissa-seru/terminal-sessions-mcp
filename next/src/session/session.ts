@@ -874,9 +874,18 @@ class LiveSession implements Session {
       const ds = opts.force ? proc.descendants(this.pid, true) : [];
       unlisted = onTerminal === undefined || ds === undefined;
       const listed = [...(onTerminal ?? []), ...(ds ?? [])];
-      /** Sends `signal` to each listed group that still holds a listed process, and records each it couldn't reach. */
+      /**
+       * Sends `signal` to each listed group that still holds a listed process, and records each it couldn't reach. When that can't be
+       * checked, it sends nothing and records the listing as incomplete: a group whose id was taken again isn't signalled, and the
+       * result says what was started may live on.
+       */
       const reach = (signal: 'SIGHUP' | 'SIGKILL'): void => {
-        for (const pgid of proc.held(listed) ?? new Set(listed.map((d) => d.pgrp))) {
+        const held = proc.held(listed);
+        if (!held) {
+          if (listed.length) unlisted = true;
+          return;
+        }
+        for (const pgid of held) {
           const error = proc.signalGroup(pgid, signal);
           // On Linux, a stopped process holds the hangup until it's continued. So CONT follows a hangup that was delivered, as bash
           // sends it. One that wasn't leaves the group as it was: a CONT then could only resume what close doesn't end.

@@ -957,6 +957,25 @@ for (const sh of shells) {
       }
     });
 
+    test('when close can\'t check which listed groups still hold their processes, it signals none, and says what was started may live on', { skip: process.platform !== 'darwin' ? 'the check fails only where it spawns ps' : false }, async () => {
+      const s = await open(shell);
+      const c = await ran(s, sh.name === 'fish' ? 'sleep 300 & echo "JOB:$last_pid"; disown' : 'sleep 300 & echo "JOB:$!"; disown');
+      const job = pidOf(s, c, 'JOB');
+      const keep = process.env.PATH;
+      try {
+        // close lists the terminal's processes before its first wait. With no ps to find after that, only its later check fails.
+        const closing = s.close();
+        process.env.PATH = '';
+        const exit = await closing;
+        process.env.PATH = keep;
+        assert.equal(exit.unlisted, true, JSON.stringify(exit));
+        assert.equal(gone(job), false, 'the disowned job was left alone');
+      } finally {
+        process.env.PATH = keep;
+        killPid(job);
+      }
+    });
+
     test('close hangs up a job whose parent exited, which no shell counts as its own', { skip: sh.name !== 'bash' ? 'close lists the same way in every shell' : false }, async () => {
       const s = await open(shell);
       const job = pidOf(s, await ran(s, `sh -c 'sleep 300 & echo "JOB:$!"'`), 'JOB');
