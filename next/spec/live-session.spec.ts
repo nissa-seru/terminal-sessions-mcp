@@ -1426,6 +1426,7 @@ for (const sh of shells) {
       assert.equal(e.kind, 'ended', JSON.stringify(e));
       // fish runs its postexec handlers for exit, so its end mark comes; bash and zsh exit first, and the command ends with no status.
       assert.equal(e.kind === 'ended' ? e.command.end?.status : 'x', sh.name === 'fish' ? 0 : undefined);
+      if (sh.name !== 'fish') assert.equal(e.kind === 'ended' ? e.command.end?.unfollowed?.how : 'x', 'ended', JSON.stringify(e));
       await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
       const f = s.front();
       assert.equal(f.state, 'prompt');
@@ -1927,6 +1928,26 @@ test("a far command whose carrier is suspended is no longer followed, and its en
     assert.match(end.unfollowed?.by ?? '', /script/);
     const f = s.front();
     assert.equal(f.state === 'prompt' || f.state === 'running' ? f.within : 'x', undefined);
+  } finally {
+    process.kill(-w, 'SIGKILL');
+    await s.close({ force: true, deadline: by() });
+  }
+});
+
+test("a far command whose carrier a shell with the integration reports stopped is no longer followed, and its end says the carrier left the terminal", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open(which('bash')!);
+  await reachFar(s, which('bash')!);
+  assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+  const f = s.front();
+  const w = f.state === 'prompt' && f.within ? f.within.pgid : 0;
+  assert.ok(w > 0, JSON.stringify(f));
+  const r = await s.run('sleep 300', { waitMs: 300 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  // What Ctrl-Z does to a local ssh: its group stops, and the shell below gives its end mark.
+  process.kill(-w, 'SIGSTOP');
+  try {
+    const end = await eventually('the far command is no longer followed', () => (s.front(), r.kind === 'running' ? r.command.end : undefined));
+    assert.deepEqual([end.status, end.unfollowed?.how], [undefined, 'left'], JSON.stringify(end));
   } finally {
     process.kill(-w, 'SIGKILL');
     await s.close({ force: true, deadline: by() });
