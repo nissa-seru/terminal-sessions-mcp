@@ -33,6 +33,24 @@ def read_until(fd, pat, timeout=10):
     return buf
 
 
+PROGRESS = []
+report = {}
+
+
+def step(name):
+    PROGRESS.append([name, round(time.time() - T0, 2)])
+
+
+def bail(signum, frame):
+    report['timed_out_at'] = PROGRESS[-1] if PROGRESS else None
+    report['progress'] = PROGRESS
+    print(json.dumps(report, indent=1, default=str), flush=True)
+    os._exit(3)
+
+
+T0 = time.time()
+signal.signal(signal.SIGALRM, bail)
+signal.alarm(120)
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['PS1'] = 'P> '
@@ -40,7 +58,9 @@ if pid == 0:
 
 import fcntl, struct, termios
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 40, 120, 0, 0))
+step('started')
 read_until(fd, rb'P> ')
+step('first prompt')
 raw = {}
 cmds = [
     ('normal', 'sleep 601 & echo J=normal:$!'),
@@ -53,6 +73,7 @@ cmds = [
 ]
 jobs = {}
 for name, c in cmds:
+    step('typing ' + name)
     os.write(fd, (c + '\n').encode())
     out = read_until(fd, rb'J=' + name.encode() + rb':(\d+)')
     m = re.search(rb'J=' + name.encode() + rb':(\d+)', out)
@@ -66,7 +87,8 @@ shell_tty = None
 if not LINUX:
     shell_tty = subprocess.run(['ps', '-o', 'tty=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
 
-report = {'raw_unmatched': raw, 'platform': sys.platform, 'shell': SHELL, 'shell_pid': pid, 'shell_stat': stat(pid), 'shell_tty': shell_tty, 'jobs': jobs, 'before': {k: stat(v) for k, v in jobs.items() if v}}
+step('jobs started')
+report.update({'raw_unmatched': raw, 'platform': sys.platform, 'shell': SHELL, 'shell_pid': pid, 'shell_stat': stat(pid), 'shell_tty': shell_tty, 'jobs': jobs, 'before': {k: stat(v) for k, v in jobs.items() if v}})
 if not LINUX:
     for args in (['-t', shell_tty], ['-t', shell_tty.replace('tty', '')]):
         r = subprocess.run(['ps', *args, '-o', 'pid=,pgid=,command='], capture_output=True, text=True)
@@ -107,6 +129,7 @@ else:
     listed = {int(l.split()[0]): int(l.split()[1]) for l in out if l.strip() and int(l.split()[0]) != pid}
 report['listed'] = listed
 
+step('listed')
 t0 = time.time()
 status, hups, killed = None, 0, False
 while status is None:
@@ -122,6 +145,7 @@ while status is None:
             status = st
             break
         time.sleep(0.01)
+step('shell gone')
 report['shell_exit'] = {'status': status, 'ms': round((time.time() - t0) * 1000), 'hups': hups, 'killed': killed}
 time.sleep(1.0)
 report['after_1s'] = {k: stat(v) for k, v in jobs.items() if v}
@@ -140,6 +164,7 @@ for g in sorted(set(listed.values())):
             except OSError as e:
                 sent.append((g, sig.name, e.__class__.__name__))
 report['sent'] = sent
+step('signalled')
 time.sleep(1.0)
 report['after_fix_1s'] = {k: (stat(v) is not None) for k, v in jobs.items() if v}
 for v in jobs.values():
@@ -148,4 +173,5 @@ for v in jobs.values():
             os.kill(v, signal.SIGKILL)
         except ProcessLookupError:
             pass
-print(json.dumps(report, indent=1))
+report['progress'] = PROGRESS
+print(json.dumps(report, indent=1, default=str), flush=True)
