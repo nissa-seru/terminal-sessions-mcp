@@ -1,7 +1,7 @@
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Host, type Caller, type Wake } from '../src/tools/host.js';
-import { cutAt, outputValue, RESULT_MAX_CHARS } from '../src/tools/render.js';
+import { cutAt, linesText, outputValue, RESULT_MAX_CHARS } from '../src/tools/render.js';
 import type { Command, Front, OpenOptions, Process } from '../src/session/types.js';
 import { FakeSession } from './fake-session.js';
 
@@ -956,6 +956,15 @@ test("run's output past its budget keeps its start and end, and says where the g
       assert.doesNotMatch(v.output, lone, `pad ${JSON.stringify(pad)}, budget ${budget}`);
       assert.equal(v.output.slice(0, v.outputLeftOut!.at) + text.slice(v.outputLeftOut!.at, v.outputLeftOut!.at + v.outputLeftOut!.characters) + v.output.slice(v.outputLeftOut!.at), text);
     }
+});
+
+test("the note of earlier lines no longer kept counts within the text's budget, so lines that fit the budget alone keep their end", () => {
+  const lines = Array.from({ length: 40 }, (_, i) => `line ${i} ${'x'.repeat(20)}`);
+  const budget = lines.join('\n').length;
+  const text = linesText({ from: 10, to: 50, lines, dropped: 10, live: 0 }, budget, '`read` gives more');
+  assert.ok(text.length <= budget, `${text.length} > ${budget}`);
+  assert.match(text, /^… 10 earlier lines no longer kept\n/);
+  assert.ok(text.endsWith(`\n${lines.at(-1)}`), text.slice(-80));
 });
 
 test("the host says what the session reports of a match on the screen, an undelivered signal, an unlisted or unseen close, a timed-out search's long lines, unknown echo and a command's duration", async () => {
