@@ -29,6 +29,8 @@ export interface OpenOptions {
   waitMs: number;
   /** Linux: the shell's oom_score_adj; 0 leaves it alone. */
   oomScoreAdj?: number;
+  /** Where the session writes what no caller is told, such as a directory `close` couldn't remove. */
+  log?: (line: string) => void;
 }
 
 /**
@@ -45,12 +47,12 @@ export interface Exit {
 
 /** What `close` resolves with: the shell's exit, as the session saw it. */
 export type Closed = Exit & {
-  /** With `force`: the shell's descendants couldn't be listed, so only the shell was KILLed. */
+  /** The processes on the session's terminal, or with `force` the shell's descendants, couldn't be listed, so what it started may live on. */
   unlisted?: true;
   /** The shell's exit wasn't seen within a grace after its KILL, as for a process in uninterruptible sleep. */
   unconfirmed?: true;
-  /** With `force`: the groups whose KILL wasn't delivered, each with the error's code, such as `EPERM`; their processes may live on. */
-  unkilled?: Array<{ pgid: number; error: string }>;
+  /** The groups whose hangup, or KILL with `force`, wasn't delivered, each with the error's code, such as `EPERM`; their processes may live on. */
+  unreached?: Array<{ pgid: number; signal: 'SIGHUP' | 'SIGKILL'; error: string }>;
 };
 
 /** A process group in front of the terminal. */
