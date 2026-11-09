@@ -1936,3 +1936,33 @@ test('a stop closes the known sessions at once, without waiting behind an open s
   assert.ok(opened[1]!.closedWith, 'the late session closed too');
   assert.equal((await pending).isError, true);
 });
+
+test('send with paste encodes its keys by the cursor-key mode of the output it read the paste mode from', async () => {
+  let appCursor = false;
+  let wire: string | undefined;
+  const host = new Host({
+    openSession: async (o: OpenOptions) => {
+      const s = new FakeSession(o.name, o);
+      s.keyOptions = () => ({ appCursor });
+      s.bracketedPaste = async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        appCursor = true;
+        return true;
+      };
+      const send = s.send.bind(s);
+      s.send = async (bytes, opts) => {
+        wire = bytes;
+        return send(bytes, opts);
+      };
+      return s;
+    },
+    shell: '/bin/bash',
+    env: { HOME: '/home/u' },
+    sessionsDir: '/tmp/sessions',
+    startedAt: STARTED,
+  });
+  await host.call(cli(), 'open', { name: 'p' });
+  const r = await host.call(cli(), 'send', { name: 'p', text: 'abc', keys: ['Up'], paste: true });
+  assert.equal(r.isError, undefined, r.text);
+  assert.equal(wire, '\x1b[200~abc\x1b[201~\x1bOA');
+});
