@@ -212,6 +212,8 @@ class LiveSession implements Session {
   private execed = false;
   private opened = false;
   private closed = false;
+  /** The carrier group `w` and a foreground group `g` its listing showed descending from it. */
+  private carrierSeen: { w: number; g: number } | undefined;
 
   constructor(
     o: OpenOptions,
@@ -307,7 +309,12 @@ class LiveSession implements Session {
     if (kind === 'D' && !this.exitInfo) {
       const next = /^(\d+)\.\w+$/.exec(rest[0] ?? '');
       const below = this.chains.findIndex((c, i) => i < this.chains.length - 1 && integration.nonceText(c.expected) === nonce && Number(next?.[1]) === c.expected.counter + 1);
-      if (below >= 0) this.drop(below);
+      if (below >= 0) {
+        // The shell below has the terminal back. Its command ended if its group has no process; otherwise it only left the terminal, as when suspended.
+        const c = this.chains[below]!;
+        const carrier = this.chains[below + 1]!.far!.within;
+        this.drop(below, { by: (c.running ?? c.runCommand)?.text ?? carrier.argv, how: proc.groupAlive(carrier.pgid) ? 'left' : 'ended' });
+      }
     }
     const expected = integration.nonceText(this.top.expected);
     const far = this.top.far;
@@ -343,13 +350,57 @@ class LiveSession implements Session {
     return false;
   }
 
-  /** An end mark came from the shell holding chain `i`, so every shell given the integration above it has exited. A command running in one ends with no status, as at a shell's exit. */
-  private drop(i: number): void {
+  /**
+   * A shell given the integration through a local program, such as ssh, is followed only while that program holds the terminal,
+   * itself or through a process it started, as a local shell's jobs do. Once it no longer does, that chain and every chain above it
+   * are dropped. 'unread' when that can't be told, and nothing is dropped; undefined when no chain is reached through a local
+   * program other than the session's own shell.
+   */
+  private follow(shell: ReturnType<typeof proc.info>): 'held' | 'unread' | undefined {
+    this.lastLook = mono();
+    const i = this.chains.findIndex((c) => c.far !== undefined && c.far.within.pgid !== this.pid);
+    if (i < 1) return undefined;
+    const by = this.chains[i]!.far!.within;
+    const h = this.holds(by.pgid, shell);
+    if (h === true || h === undefined) return h ? 'held' : 'unread';
+    this.drop(i - 1, { by: by.argv, how: h });
+    return undefined;
+  }
+
+  /**
+   * Whether group `w` holds the terminal: in front itself, or through a process it started. 'ended' once it has no process, and
+   * 'left' when the terminal's foreground group is the shell's own, or one whose processes are listed and none descends from `w`.
+   * Undefined when that can't be told: the foreground group can't be read, a listing fails or doesn't show `w`'s processes, or
+   * shows none in that group, which then moved under the read. A verdict that a group descends from `w` is kept while it holds
+   * the terminal and `w` has a process, so it's listed once.
+   */
+  private holds(w: number, shell: ReturnType<typeof proc.info>): true | 'ended' | 'left' | undefined {
+    if (!proc.groupAlive(w)) return 'ended';
+    const g = shell?.tpgid;
+    if (g === undefined) return undefined;
+    if (g === w) return true;
+    if (g === shell!.pgrp) return 'left';
+    if (this.carrierSeen?.w === w && this.carrierSeen.g === g) return true;
+    const family = proc.familyOf(this.pid, w);
+    if (!family?.fromW) return undefined;
+    if (!family.all.some((d) => d.pgrp === g)) return undefined;
+    if (!family.fromW.some((d) => d.pgrp === g)) return 'left';
+    this.carrierSeen = { w, g };
+    return true;
+  }
+
+  /**
+   * The chains above `i` are no longer followed: the shell holding chain `i` gave an end mark, or `by`, the program they were
+   * reached through, ended or left the terminal, or the session's shell exited. That shows they're gone from here, not that a
+   * command running in one ended, so it ends with no status, as not followed.
+   */
+  private drop(i: number, why: { by: string; how: 'ended' | 'left' }): void {
     while (this.chains.length - 1 > i) {
       const c = this.chains.pop()!;
       const open = c.running ?? c.runCommand;
-      if (open) this.finish(open, undefined, { at: Date.now(), errexit: false, refusedMarks: c.refused });
+      if (open) this.finish(open, undefined, { at: Date.now(), errexit: false, refusedMarks: c.refused, unfollowed: why });
     }
+    this.carrierSeen = undefined;
     this.wake();
   }
 
@@ -475,7 +526,7 @@ class LiveSession implements Session {
     await this.t.settled();
     this.exitInfo = exit;
     if (this.t.disposed) return;
-    this.drop(0);
+    this.drop(0, { by: this.shellName, how: 'ended' });
     const c = this.top.running ?? this.top.runCommand;
     this.top.running = this.top.runCommand = undefined;
     if (c) this.finish(c, undefined, { at: Date.now(), errexit: false, refusedMarks: this.top.refused });
@@ -539,11 +590,14 @@ class LiveSession implements Session {
     const exit = this.exitInfo ?? this.ptyExit;
     if (exit) return { state: 'exited', since: this.exitedAt, exit };
     const shell = proc.info(this.pid);
+    const followed = this.top.far ? this.follow(shell) : undefined;
     const command = this.top.running?.id ?? this.top.runCommand?.id;
     const at = <T extends object>(o: T): T => (command !== undefined ? { ...o, command } : o);
     const far = this.top.far;
     if (far) {
       const depth = this.chains.length;
+      // Its marks say what the far shell does, not who holds this terminal.
+      if (followed === 'unread') return at({ state: 'unknown', since: this.since(`unknown:${depth}`) });
       if (this.prompted) {
         const pending = this.pending();
         return { state: 'prompt', since: this.since(`prompt:${depth}`), ...(pending !== undefined && { pending }), within: far.within };
@@ -758,6 +812,7 @@ class LiveSession implements Session {
     try {
       await this.until(deadline, () => {
         if (this.exitInfo || this.closed || opts.signal?.aborted) return true;
+        if (this.top.far && this.lookDue()) this.follow(proc.info(this.pid));
         if (c.end) return this.prompted || (this.plain && this.lookDue() && this.front().state === 'prompt') ? true : undefined;
         if (!this.kernelSays || !this.lookDue() || (this.kind !== 'none' && mono() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS)) return undefined;
         return this.front().state === 'waiting' || c.end ? true : undefined;
@@ -837,6 +892,7 @@ class LiveSession implements Session {
         if (opts.signal?.aborted) return 'cancelled' as const;
         if (until.kind === 'match') return (matched = this.scan(until.pattern, scan)) ? ('match' as const) : undefined;
         if (this.prompted) return until.kind === 'end' ? ('end' as const) : undefined;
+        if (this.top.far && this.lookDue()) this.follow(proc.info(this.pid));
         if (!this.kernelSays || !this.lookDue()) return undefined;
         const s = this.front().state;
         if (s === 'waiting') return 'input' as const;
