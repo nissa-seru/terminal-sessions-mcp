@@ -335,6 +335,37 @@ export function descendants(pid: number, all = false): Proc[] | undefined {
   }
 }
 
+/**
+ * From one listing: every descendant of `pid`, each with its group, and every descendant of `w`, undefined when `w` isn't among
+ * them. Undefined when they can't be listed.
+ */
+export function familyOf(pid: number, w: number): { all: Proc[]; fromW: Proc[] | undefined } | undefined {
+  const fail = (): undefined => undefined;
+  try {
+    if (LINUX) {
+      const all = descendantsHere(pid, true, fail);
+      return all && { all, fromW: descendantsHere(w, true, fail) };
+    }
+    const s = psSync(DESCENDANTS_ARGS, SPAWN_TIMEOUT_MS);
+    if (s.status !== 0) return undefined;
+    const rows = rowsOf(s.stdout);
+    const all = descendantsFrom(pid, true, rows, fail);
+    return all && { all, fromW: descendantsFrom(w, true, rows, fail) };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether process group `pgid` has a process. Only ESRCH says it has none: EPERM, for another user's group, says it has. */
+export function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+}
+
 /** Every descendant of `pid`, as `descendants` with `all` gives them, for `close`, which awaits `ps`. */
 export async function allDescendants(pid: number, l: Listing): Promise<Proc[] | undefined> {
   const fail = (why: string): undefined => void l.failed?.(`the shell's descendants: ${why}`);

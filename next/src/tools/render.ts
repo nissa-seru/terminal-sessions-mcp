@@ -44,7 +44,8 @@ export function endingText(c: Command): string[] {
   if (!end) return [];
   const parts: string[] = [];
   const status = end.status === undefined ? 'status unknown' : `exit ${end.status}`;
-  parts.push(end.stopped ? `stopped${end.status === undefined ? '' : ` (the shell reported ${status})`}` : status);
+  if (end.unfollowed) parts.push(`no longer followed: ${quoted(end.unfollowed.by)} ${end.unfollowed.how === 'left' ? 'left the terminal' : 'ended'}, so whether it ended isn't known`);
+  else parts.push(end.stopped ? `stopped${end.status === undefined ? '' : ` (the shell reported ${status})`}` : status);
   if (end.pipeline && end.pipeline.some((s) => s !== 0)) parts.push(`pipeline ${end.pipeline.join('|')}`);
   parts.push(duration(end.ms));
   if (end.errexit) parts.push('set -e is on: a failing command now ends the shell');
