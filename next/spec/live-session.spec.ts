@@ -26,8 +26,8 @@ let homes = 0;
 const sessions: Session[] = [];
 /** A deadline for `close`, on `performance.now()`'s clock. */
 const by = (ms = 30_000): number => performance.now() + ms;
-// Each test's sessions close as it ends. Held to the suite's end, on macOS they used up what spawning a shell needs, and the
-// last tests' shells failed to start.
+// Each test's sessions close as it ends. With every session held to the suite's end, the last tests' shells failed to start
+// on macOS.
 let openedBefore = 0;
 beforeEach(() => {
   openedBefore = sessions.length;
@@ -2131,6 +2131,23 @@ test("a shell reached through a program that a local shell with the integration 
   await s.close({ force: true, deadline: by() });
   assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
   assert.deepEqual(integrated.state === 'prompt' ? integrated.within?.pgid : 'x', w, 'the far shell was reached through script, not through the local bash');
+});
+
+test("a command in a far shell reached from another far shell, which ends there, is no longer followed with the shell below at its prompt again, not as left", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open('/bin/sh');
+  await far(s, which('bash')!);
+  // The second script runs inside the first far shell, on its terminal, so this terminal's foreground group is still the first.
+  await far(s, which('bash')!);
+  const f = s.front();
+  assert.ok(f.state === 'prompt' && f.within, JSON.stringify(f));
+  const e = await s.run('exit', { waitMs: 10_000 });
+  assert.equal(e.kind, 'ended', JSON.stringify(e));
+  const end = e.kind === 'ended' ? e.command.end : undefined;
+  assert.deepEqual([end?.status, end?.unfollowed?.how], [undefined, 'back'], JSON.stringify(end));
+  assert.match(end?.unfollowed?.by ?? '', /script/);
+  const below = s.front();
+  assert.ok(below.state === 'prompt' && below.within, JSON.stringify(below));
+  await s.close({ force: true, deadline: by() });
 });
 
 test("a far command whose carrier is suspended is no longer followed, and its end says the carrier left the terminal, not that it ended", { skip: which('bash') ? false : 'bash is needed' }, async () => {
