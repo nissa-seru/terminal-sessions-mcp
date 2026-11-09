@@ -52,6 +52,7 @@ async function one(name) {
     const t0 = Date.now();
     const o = await s.stop('SIGUSR1');
     console.log(`== ${name} ignored SIGUSR1: ${Date.now() - t0} ms; steps ${o.steps.map((st) => `${st.sent}->${brief(st.front)}`).join(', ')}; ${ended(s, r.command.id)}; next ${o.next}`);
+    await s.stop();
     const r2 = await s.run(`sh -c 'trap "echo GOT-USR1" USR1; while :; do sleep 0.1; done'`, { waitMs: 300 });
     const t1 = Date.now();
     const o2 = await s.stop('SIGUSR1');
