@@ -1861,7 +1861,8 @@ test('integrate names a shell it has no hooks for, and types nothing more', { sk
 test("a shell given the integration above a shell without it is gone once that shell holds the terminal again, and what's typed next is the local shell's", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open('/bin/sh');
   await far(s, which('bash')!);
-  assert.notEqual(s.front().state === 'prompt' ? s.front().within : undefined, undefined);
+  const integrated = s.front();
+  assert.notEqual(integrated.state === 'prompt' ? integrated.within : undefined, undefined);
   const e = await s.run('exit', { waitMs: 10_000 });
   assert.equal(e.kind, 'ended', JSON.stringify(e));
   assert.equal(e.kind === 'ended' ? e.command.end?.status : 'x', undefined);
