@@ -1918,7 +1918,11 @@ test("with the terminal's foreground group unread, a program in front of a shell
   });
   await failing('ps', '/bin/ps', async (ps) => {
     ps.on();
-    const f = s.front();
+    // With the shell taken to be in front, the shell reads as busy until its output has been quiet for a while, then as at its prompt.
+    const f = await eventually('a state other than the shell busy', () => {
+      const now = s.front();
+      return now.state !== 'running' && now;
+    });
     assert.equal(f.state, 'unknown');
     assert.equal(f.state === 'unknown' ? f.command : 'x', r.kind === 'running' ? r.command.id : 'y');
     const typed = await s.run('echo SHOULD_NOT_RUN', { waitMs: 1000 });
