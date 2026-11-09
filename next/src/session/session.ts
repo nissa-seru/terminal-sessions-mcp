@@ -982,8 +982,6 @@ class LiveSession implements Session {
       for (const [i, line] of lines.slice(0, -1).entries()) {
         this.lastWrite = mono();
         this.p.write(line);
-        if (!(await this.until(deadline, () => ((this.probe?.acked ?? -1) >= i ? true : by() ? false : undefined), opts.signal)))
-          return { kind: 'incomplete', step: 'hooks', by: by() ?? 'timeout', front: this.front() };
       }
       const chain = newChain(nonce, '');
       chain.far = { kind, within, drained: [] };
