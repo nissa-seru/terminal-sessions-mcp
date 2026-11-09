@@ -268,7 +268,7 @@ export interface Session {
   wait(until: Until, opts: { waitMs: number; from: number; take?: boolean; signal?: AbortSignal }): Promise<WaitOutcome>;
   /** Without `signal`, in steps: C-c, typed to the terminal, so it reaches whatever is in front, a shell's own loop included; then TERM, then KILL, each with a grace and each only to the job's group while it is still the shell's. With `signal`, that one step. */
   stop(signal?: NodeJS.Signals, opts?: { abort?: AbortSignal }): Promise<StopOutcome>;
-  /** Lists the processes on the session's terminal first. Then it hangs up the shell, again every 500 ms while it is there, and KILLs it if it is still there after a grace. Once the shell is gone, it hangs up each listed group, then continues it. A process that left the terminal with setsid isn't listed, so it lives on. With `force`, at once KILLs every listed group and every group the shell started, then the shell. Resolves with the exit, at once if it had exited. */
+  /** Lists the processes on the session's terminal first. Then it hangs up the shell, again every 500 ms while it is there, and KILLs it if it is still there after a grace. Once the shell is gone, it hangs up each listed group, and continues each group the hangup reached. A process that left the terminal with setsid isn't listed, so it lives on. With `force`, at once KILLs every listed group and every group the shell started, then the shell. Resolves with the exit, at once if it had exited. */
   close(opts?: { force?: boolean }): Promise<Closed>;
 
   /** A one-shot pattern watch from line `from` on; its id names the `match` event. Given `command`, its match in that command's output is emitted before the command's `ended`; other watches search a slice at a time. */

@@ -878,8 +878,9 @@ class LiveSession implements Session {
       const reach = (signal: 'SIGHUP' | 'SIGKILL'): void => {
         for (const pgid of proc.held(listed) ?? new Set(listed.map((d) => d.pgrp))) {
           const error = proc.signalGroup(pgid, signal);
-          // On Linux, a stopped process holds the hangup until it's continued. So CONT follows it, as bash sends it.
-          if (signal === 'SIGHUP') proc.signalGroup(pgid, 'SIGCONT');
+          // On Linux, a stopped process holds the hangup until it's continued. So CONT follows a hangup that was delivered, as bash
+          // sends it. One that wasn't leaves the group as it was: a CONT then could only resume what close doesn't end.
+          if (signal === 'SIGHUP' && !error) proc.signalGroup(pgid, 'SIGCONT');
           if (error && error !== 'ESRCH' && proc.held(listed.filter((d) => d.pgrp === pgid))?.has(pgid) !== false) unreached.push({ pgid, signal, error });
         }
       };
