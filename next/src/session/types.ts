@@ -169,9 +169,10 @@ export type Took = Array<Extract<SessionEvent, { kind: 'ended' | 'waiting' | 'ex
 export type RunOutcome =
   /**
    * Not at a prompt, text pending at it, or the shell exited: `front` says which. Nothing was typed.
-   * `maxBytes`: the text is longer than a shell given the integration with `integrate` takes, at most this many bytes of UTF-8.
+   * `tooLong`: a shell given the integration with `integrate` gets the text on one typed line, and this one, `typed` characters,
+   * is longer than `max`. Printable ASCII types as itself, but for `'`, `\` and `!`; every other byte types as a five-character escape.
    */
-  | { kind: 'refused'; front: Front; took: Took; maxBytes?: number }
+  | { kind: 'refused'; front: Front; took: Took; tooLong?: { typed: number; max: number } }
   | { kind: 'ended'; command: Command; front: Front; took: Took }
   | { kind: 'running'; command: Command; front: Front; took: Took };
 

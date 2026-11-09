@@ -21,8 +21,8 @@ const CLOSE_GRACE_MS = 2000;
 const HANGUP_EVERY_MS = 500;
 const RECENT_NONCES = 64;
 const MAX_COMMANDS = 10_000;
-/** The longest text `run` gives a shell with the integration by typing, in bytes of UTF-8. Its typed line, escaped, can be five times as long, and the line editor's time grows with it. */
-const FAR_MAX_BYTES = 64 * 1024;
+/** The longest line `run` types into a shell given the integration by typing: zsh's and bash 3's line editors take time that grows with its square. */
+const FAR_MAX_TYPED = 8192;
 /** The kept commands' text and discarded input, at most, besides the count: the frozen transcript's bound. */
 const MAX_COMMAND_CHARS = 6 * 1024 * 1024;
 const keptChars = (c: Command): number => (c.text?.length ?? 0) + (c.end?.flushed?.length ?? 0);
@@ -166,8 +166,8 @@ class LiveSession implements Session {
   private readonly log: ((line: string) => void) | undefined;
   private readonly shellName: string;
   private readonly chains: Chain[];
-  /** While `integrate` waits for its probe line's answer. */
-  private probe: { answer?: ProbeAnswer } | undefined;
+  /** While `integrate` runs: its probe line's answer, and the index of the last typed line that acknowledged it ran. */
+  private probe: { call: string; answer?: ProbeAnswer; acked?: number } | undefined;
   private readonly recent: string[] = [];
   private readonly commands = new Map<number, Command>();
   private commandChars = 0;
@@ -280,6 +280,12 @@ class LiveSession implements Session {
         this.probe.answer = { fish, zsh, bash, ...(zero !== undefined && { zero }) };
         this.wake();
       }
+      return false;
+    }
+    if (kind === 'P') {
+      const m = /^(\d+)\.(\d+)$/.exec(nonce ?? '');
+      if (this.probe && m && m[1] === this.probe.call) this.probe.acked = Number(m[2]);
+      this.wake();
       return false;
     }
     if (kind === 'D' && !this.exitInfo) {
@@ -701,12 +707,13 @@ class LiveSession implements Session {
     const f = this.front();
     if (stopped() || f.state !== 'prompt' || f.pending !== undefined) return { kind: 'refused', front: f, took: [] };
     const far = this.top.far;
-    if (far && Buffer.byteLength(text, 'utf8') > FAR_MAX_BYTES) return { kind: 'refused', front: f, took: [], maxBytes: FAR_MAX_BYTES };
+    const farLine = far && integration.farCommand(far.kind, text);
+    if (farLine && farLine.length > FAR_MAX_TYPED) return { kind: 'refused', front: f, took: [], tooLong: { typed: farLine.length, max: FAR_MAX_TYPED } };
     const id = this.nextId();
     const c: Command = { id, text, from: this.t.pos().line + 1, startedAt: Date.now() };
     this.store(c);
     this.startedMono.set(c, mono());
-    const cf: { files: Array<{ path: string; body: string }>; line: string } = far ? { files: [], line: integration.farCommand(far.kind, text) } : integration.commandFile(this.plain ? 'none' : this.kind, this.dir, id, text);
+    const cf: { files: Array<{ path: string; body: string }>; line: string } = farLine ? { files: [], line: farLine } : integration.commandFile(this.plain ? 'none' : this.kind, this.dir, id, text);
     if (cf.files.length) this.files.set(id, cf.files.map((f) => f.path));
     for (const f of cf.files) fs.writeFileSync(f.path, f.body, { mode: 0o600 });
     this.top.runCommand = c;
@@ -949,8 +956,9 @@ class LiveSession implements Session {
     const f = this.front();
     if (f.state === 'exited' || this.prompted || by()) return { kind: 'refused', front: f };
     const within: Process = f.state === 'prompt' ? { pgid: this.pid, argv: proc.info(this.pid)?.argv ?? this.shellName, shell: true } : f.process;
+    const call = String(randomInt(100000, 1000000));
     const answered = async (): Promise<ProbeAnswer | undefined> => {
-      this.probe = {};
+      this.probe = { call };
       return (await this.until(deadline, () => this.probe?.answer ?? (by() ? null : undefined), opts.signal)) ?? undefined;
     };
     try {
@@ -965,12 +973,20 @@ class LiveSession implements Session {
         return { kind: 'unsupported', ...(name && { shell: path.basename(name) }), front: this.front() };
       }
       const nonce = { counter: 1, random: randomDigits() };
+      // The pieces carry the nonce, and their echo shows it, so it's redacted from the first.
       this.remember(nonce);
+      const lines = integration.farHooks(kind, nonce, call);
+      for (const [i, line] of lines.slice(0, -1).entries()) {
+        this.lastWrite = mono();
+        this.p.write(line);
+        if (!(await this.until(deadline, () => ((this.probe?.acked ?? -1) >= i ? true : by() ? false : undefined), opts.signal)))
+          return { kind: 'incomplete', step: 'hooks', by: by() ?? 'timeout', front: this.front() };
+      }
       const chain = newChain(nonce, '');
       chain.far = { kind, within, drained: [] };
       this.chains.push(chain);
       this.lastWrite = mono();
-      this.p.write(integration.historyOff(kind) + integration.farHooks(kind, nonce));
+      this.p.write(lines.at(-1)!);
       const drawn = await this.until(deadline, () => (!this.chains.includes(chain) || by() ? false : this.top === chain && this.prompted ? true : undefined), opts.signal);
       if (drawn) return { kind: 'integrated', shell: kind, version: answer[kind], front: this.front() };
       return { kind: 'incomplete', step: 'hooks', by: by() ?? (this.chains.includes(chain) ? 'timeout' : 'exited'), front: this.front() };

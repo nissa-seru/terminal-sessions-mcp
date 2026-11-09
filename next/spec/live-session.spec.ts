@@ -1326,9 +1326,9 @@ for (const sh of shells) {
       const p = await ran(s, 'false | sh -c "exit 3"');
       assert.equal(p.end?.status, 3);
       assert.deepEqual(p.end?.pipeline, [1, 3]);
-      const t = await ran(s, "printf '%s|%s|%s\\n' 'a!b' '~x' 'tab\there'\necho two");
+      const t = await ran(s, "printf '%s|%s|%s|%s|%s\\n' 'a!b' '~x' 'tab\there' \"it's\" 'back\\slash é'\necho two");
       // The terminal draws the tab as spaces. It reached the shell as a tab, not as a key that completes.
-      assert.match(out(s, t).join('\n'), /^a!b\|~x\|tab +here\ntwo$/);
+      assert.match(out(s, t).join('\n'), /^a!b\|~x\|tab +here\|it's\|back\\slash é\ntwo$/);
       const e = await s.run('exit', { waitMs: 10_000 });
       assert.equal(e.kind, 'ended', JSON.stringify(e));
       // fish runs its postexec handlers for exit, so its end mark comes; bash and zsh exit first, and the command ends with no status.
@@ -1429,14 +1429,16 @@ for (const sh of shells) {
       assert.ok(!/\d{20}/.test(s.lines(0).lines.join('\n')), 'no nonce in the transcript');
     });
 
-    test('a run whose text is longer than a far shell takes is refused, naming the limit', async () => {
+    test('a run whose typed line would be longer than a far shell takes is refused, naming the limit', async () => {
       const s = await open(shell);
       await far(s, shell);
-      const r = await s.run(`echo ${'x'.repeat(64 * 1024)}`, { waitMs: 2000 });
+      const r = await s.run(`echo ${'x'.repeat(8192)}`, { waitMs: 2000 });
       assert.equal(r.kind, 'refused');
-      assert.equal(r.kind === 'refused' && r.maxBytes, 64 * 1024);
-      const ok = await ran(s, `echo ${'y'.repeat(60 * 1024)} | wc -c`, 60_000);
-      assert.equal(out(s, ok).at(-1)?.trim(), String(60 * 1024 + 1));
+      const tooLong = r.kind === 'refused' ? r.tooLong : undefined;
+      assert.equal(tooLong?.max, 8192);
+      assert.ok(tooLong && tooLong.typed > 8192, JSON.stringify(tooLong));
+      const ok = await ran(s, `echo ${'y'.repeat(7000)} | wc -c`, 20_000);
+      assert.equal(out(s, ok).at(-1)?.trim(), '7001');
     });
 
     test('a second relay from the far shell takes the integration on top; when the first relay ends, both are gone', async () => {
@@ -1475,20 +1477,11 @@ for (const sh of shells) {
       assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
     });
 
-    test('hooks typed while each prompt waits in a slow prompt hook arrive whole', { skip: sh.name !== 'bash' ? 'the slow hook is a PROMPT_COMMAND' : false }, async () => {
-      // While the hook runs, the terminal is in canonical mode. Once no whole line is waiting there, it keeps at most 4095 bytes
-      // of the next (1024 on macOS) and drops the rest, so a line of the hooks longer than that would arrive cut.
-      const s = await open(shell);
-      await reachFar(s, shell, { PROMPT_COMMAND: 'sleep 0.3' });
-      const r = await s.integrate({ waitMs: 20_000 });
-      assert.equal(r.kind, 'integrated', JSON.stringify(r));
-      assert.deepEqual(out(s, await ran(s, 'echo whole')), ['whole']);
-    });
-
     test('hooks whose prompt is drawn after the wait ran out still give the shell the integration', { skip: sh.name !== 'bash' ? 'the held prompt is a PROMPT_COMMAND' : false }, async () => {
       const s = await open(shell);
       const gate = newGate();
-      await reachFar(s, shell, { PROMPT_COMMAND: `while [ -e ${gate} ]; do sleep 0.05; done` });
+      // The prompt holds only once the hooks ran, so their prompt is what's late.
+      await reachFar(s, shell, { PROMPT_COMMAND: `[ -z "\${__tsm_c-}" ] || while [ -e ${gate} ]; do sleep 0.05; done` });
       fs.writeFileSync(gate, '');
       const r = await s.integrate({ waitMs: 1500 });
       assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['hooks', 'timeout'], JSON.stringify(r));

@@ -396,41 +396,48 @@ done
 stty "$m" 2>/dev/null
 `;
 
-/** Bytes a typed line carries as they are. Every other byte goes as a `\0ooo` escape, which `printf '%b'` decodes. */
-const SAFE = new Set([...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ,._+:@%/=-'].map((c) => c.charCodeAt(0)));
+/**
+ * Bytes a typed line carries as they are, inside single quotes: printable ASCII but for the quote, the backslash and `!`, which no
+ * line editor acts on there. Every other byte goes as a `\0ooo` escape, which `printf '%b'` decodes.
+ */
+const SAFE = new Set(Array.from({ length: 0x7f - 0x20 }, (_, i) => i + 0x20).filter((b) => b !== 0x27 && b !== 0x5c && b !== 0x21));
 const escaped = (text: string): string => {
   let out = '';
   for (const b of Buffer.from(text, 'utf8')) out += SAFE.has(b) ? String.fromCharCode(b) : `\\0${b.toString(8).padStart(3, '0')}`;
   return out;
 };
 
-/** The typed line that decodes `program` and evals it at the shell's top level. */
-const typed = (kind: FarKind, program: string): string =>
-  kind === 'fish' ? ` eval (printf '%b' '${escaped(program)}' | string collect)\r` : ` eval "$(printf '%b' '${escaped(program)}')"\r`;
-
-/**
- * What a shell saves to a history file is turned off on a line of its own, typed before the hooks, which carry the nonce: zsh and
- * fish can save a line as it's entered, and bash a line it ran, before a later line runs.
- */
-export const historyOff = (kind: FarKind): string => (kind === 'fish' ? " set -g fish_history ''\r" : ' unset HISTFILE\r');
-
 /**
  * The longest piece of the hooks on one typed line. Until its line editor starts, a shell reads the terminal in canonical mode,
- * which keeps at most 1024 bytes of a line on macOS and 4095 on Linux, so the hooks go in pieces that each fit.
+ * which keeps at most 1024 bytes of a line on macOS and 4095 on Linux, so the hooks go in pieces that each fit. macOS also loses
+ * lines typed ahead past what it holds, so each piece is typed only once the line before it has run and printed its P mark.
  */
 const PIECE = 768;
+
+/** The P mark a typed line prints as its last act, so the next is typed only once the shell has run it: `call` names the call, and `i` the line. */
+const ack = (kind: FarKind, call: string, i: number): string => (kind === 'fish' ? `; printf '\\e]133;P;${call}.${i}\\a'` : `; builtin printf '\\033]133;P;${call}.${i}\\007'`);
 
 /** After the hooks, so these replace what the hooks define: the drain's script, a filter that keeps typed lines out of history, and a way for an eval to end with a status. */
 const FAR_POST: Record<FarKind, string> = {
   bash: `__tsm_setst() { return "$1"; }
-HISTIGNORE="$\{HISTIGNORE:+$HISTIGNORE:}"' eval "$(printf *'
+__tsm_pre() {
+  case $\{PS0-} in *'133;C;'*) ;; *) builtin printf '\\033]133;C;%s.%s;\\007' "$__tsm_c" "$__tsm_r" ;; esac
+  builtin history -s -- "$__tsm_t"
+}
+HISTIGNORE="$\{HISTIGNORE:+$HISTIGNORE:}"' __tsm_*: eval "$(printf *'
 __tsm_dr=@DR@
 `,
   zsh: `__tsm_setst() { return $1 }
-__tsm_nohist() { [[ $1 != ' eval "$(printf '* ]] }
+__tsm_pre() { builtin print -s -- "$__tsm_t" }
+__tsm_nohist() { [[ $1 != ' __tsm_'* && $1 != ' eval "$(printf '* ]] }
 __tsm_dr=@DR@
 `,
-  fish: `set -g __tsm_dr @DR@
+  fish: `function __tsm_pre
+    if test (string split -f1 . -- $FISH_VERSION) -ge 4
+        builtin history append -- $__tsm_t
+    end
+end
+set -g __tsm_dr @DR@
 `,
 };
 
@@ -440,8 +447,13 @@ const FAR_DRAIN_CALL: Record<FarKind, string> = {
   fish: '/bin/sh -c "$__tsm_dr" sh $__tsm_c.$__tsm_r 2>/dev/null >/dev/tty',
 };
 
-/** The typed lines that give a shell of `kind` the hooks, its chain starting at `nonce`: pieces of the escaped program kept in a variable, then a line that decodes and evals it. */
-export function farHooks(kind: FarKind, nonce: Nonce): string {
+/**
+ * The lines that give a shell of `kind` the hooks, its chain starting at `nonce`, each to be typed once the one before has printed
+ * its P mark, which carries `call` and the line's index. The first turns saving history to a file off: zsh and fish can save a line as it's entered,
+ * and bash a line it ran before a later one runs, so it carries no nonce. The pieces of the escaped program go into a variable,
+ * and the last line decodes and evals it; the prompt that follows is its acknowledgement.
+ */
+export function farHooks(kind: FarKind, nonce: Nonce, call: string): string[] {
   const quote = kind === 'fish' ? fishq : sq;
   const hooks = kind === 'bash' ? BASH_HOOKS : kind === 'zsh' ? ZSH_HOOKS : FISH_HOOKS;
   const program = (hooks + FAR_POST[kind])
@@ -459,27 +471,20 @@ export function farHooks(kind: FarKind, nonce: Nonce): string {
     pieces.push(e.slice(i, j));
     i = j;
   }
-  if (kind === 'fish') return [` set -g __tsm_h ''\r`, ...pieces.map((p) => ` set __tsm_h "$__tsm_h"'${p}'\r`), ` eval (printf '%b' "$__tsm_h" | string collect); set -e __tsm_h\r`].join('');
-  return [` __tsm_h=''\r`, ...pieces.map((p) => ` __tsm_h=$__tsm_h'${p}'\r`), ` eval "$(printf '%b' "$__tsm_h")"; unset __tsm_h\r`].join('');
+  if (kind === 'fish')
+    return [` set -g fish_history ''; set -g __tsm_h ''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` set __tsm_h "$__tsm_h"'${p}'${ack(kind, call, i + 1)}\r`), ` eval (printf '%b' "$__tsm_h" | string collect); set -e __tsm_h\r`];
+  return [` unset HISTFILE; __tsm_h=''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` __tsm_h=$__tsm_h'${p}'${ack(kind, call, i + 1)}\r`), ` eval "$(printf '%b' "$__tsm_h")"; unset __tsm_h\r`];
 }
 
 /**
- * The typed line `run` gives a shell of `kind` with the integration by typing. The program it decodes
- * is the command file's body, with the text inline and followed by a blank line, which ends a trailing
- * backslash's continuation; the statuses are kept within the same eval, so its pipeline's are its own.
+ * The line `run` types into a shell given the integration by typing, at its prompt. The text goes once, escaped, into a variable;
+ * `__tsm_pre` adds it to the shell's history (and in bash 3, with no PS0, prints the start mark), and an eval runs it followed by a
+ * blank line, which ends a trailing backslash's continuation, and the line that keeps its statuses, so its pipeline's are its own.
  */
 export function farCommand(kind: FarKind, text: string): string {
-  if (kind === 'bash')
-    return typed(
-      kind,
-      [
-        `case $\{PS0-} in *'133;C;'*) ;; *) builtin printf '\\033]133;C;%s.%s;\\007' "$__tsm_c" "$__tsm_r" ;; esac`,
-        `builtin history -s -- ${sq(text)}`,
-        text,
-        '',
-        '__tsm_st=$? __tsm_ps="$\{PIPESTATUS[*]}"; __tsm_hook 2>/dev/null; __tsm_setst "$__tsm_st"',
-      ].join('\n'),
-    );
-  if (kind === 'zsh') return typed(kind, `builtin print -s -- ${sq(text)}\n${text}\n\n__tsm_st=$? __tsm_ps="$\{(j: :)pipestatus}"; __tsm_hook 2>/dev/null; __tsm_setst $__tsm_st`);
-  return typed(kind, `if test (string split -f1 . -- $FISH_VERSION) -ge 4\n    builtin history append -- ${fishq(text)}\nend\n${text}\n\nset -g __tsm_fps $pipestatus $status; __tsm_setst $__tsm_fps[-1]`);
+  const e = escaped(text);
+  if (kind === 'fish')
+    return ` set -g __tsm_t (printf '%b' '${e}' | string collect -N); __tsm_pre; eval (printf '%s\\n\\nset -g __tsm_fps $pipestatus $status' "$__tsm_t" | string collect); __tsm_setst $__tsm_fps[-1]\r`;
+  const ps = kind === 'zsh' ? '$\{(j: :)pipestatus}' : '$\{PIPESTATUS[*]}';
+  return ` __tsm_t=$(printf '%b' '${e}'); __tsm_pre; builtin eval "$__tsm_t"$'\\n\\n''__tsm_st=$? __tsm_ps="${ps}"'; __tsm_hook 2>/dev/null; __tsm_setst "$__tsm_st"\r`;
 }
