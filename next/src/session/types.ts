@@ -47,7 +47,7 @@ export interface Exit {
 
 /** What `close` resolves with: the shell's exit, as the session saw it. */
 export type Closed = Exit & {
-  /** The processes on the session's terminal, or with `force` the shell's descendants, couldn't be listed, so what it started may live on. */
+  /** The processes on the session's terminal, or with `force` the shell's descendants, couldn't be listed, or close couldn't check which listed groups still held them, in which case it signalled none. Either way, what it started may live on. */
   unlisted?: true;
   /** The shell's exit wasn't seen within a grace after its KILL, as for a process in uninterruptible sleep. */
   unconfirmed?: true;
