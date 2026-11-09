@@ -686,6 +686,11 @@ class LiveSession implements Session {
     return { appCursor: this.t.appCursor };
   }
 
+  async bracketedPaste(): Promise<boolean> {
+    await this.t.settled();
+    return this.t.bracketedPaste;
+  }
+
   /** Resolves with `done()`'s first value, or undefined at the deadline. It looks again on each wake and tick, and when `signal` aborts. */
   private until<T>(deadline: number, done: () => T | undefined, signal?: AbortSignal): Promise<T | undefined> {
     return new Promise((resolve) => {

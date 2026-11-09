@@ -308,6 +308,8 @@ export interface Session {
   screen(): Screen;
   /** For keys' `inputBytes`: arrows follow the cursor-key mode the program set. */
   keyOptions(): { appCursor: boolean };
+  /** Whether the program in front has turned bracketed paste on, as of all output so far. */
+  bracketedPaste(): Promise<boolean>;
 
   /** Only at a prompt with nothing pending; otherwise refused with nothing typed. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the mark at the prompt's end, as `send` does. In `run`, `send` and `wait`, an aborted `signal` ends the call's wait at once: `run` is refused if nothing was typed yet, and `send` and `wait` return `by: 'cancelled'`. */
   run(text: string, opts: { waitMs: number; take?: boolean; signal?: AbortSignal }): Promise<RunOutcome>;
