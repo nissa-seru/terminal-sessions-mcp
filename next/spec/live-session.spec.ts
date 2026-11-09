@@ -1914,6 +1914,30 @@ test('once the carrier ends and the same line starts another program in front, t
   assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
 });
 
+test("a shell reached through a program that a local shell with the integration started is followed only while that program holds the terminal, and the local shell stays followed", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open('/bin/sh');
+  const local = await localFar(s);
+  const capture = path.join(tmp, `capture-${++gates}`);
+  await farThen(s, `cat > '${capture}'`);
+  const integrated = s.front();
+  // The program now in front, as the kernel shows it: script, a job of the local bash.
+  const w = proc.info(s.pid)?.tpgid ?? 0;
+  assert.ok(w > 0 && w !== local, JSON.stringify({ w, local }));
+  // Ended from outside while the far shell is idle, as a dropped connection ends ssh.
+  process.kill(-w, 'SIGTERM');
+  await eventually('cat holds the terminal', () => {
+    const shell = proc.info(s.pid);
+    return shell?.tpgid !== undefined && shell.tpgid !== shell.pgrp && shell.tpgid !== w && shell.tpgid !== local && proc.groupAlive(w) === false;
+  });
+  const f = s.front();
+  // cat is a job of the local bash, whose chain stays: its line is still running.
+  assert.ok(f.state === 'running' && f.within?.pgid === local, JSON.stringify(f));
+  assert.equal((await s.run('echo MUST_NOT_REACH_CAT', { waitMs: 300 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+  assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
+  assert.deepEqual(integrated.state === 'prompt' ? integrated.within?.pgid : 'x', w, 'the far shell was reached through script, not through the local bash');
+});
+
 test("a far command whose carrier is suspended is no longer followed, and its end says the carrier left the terminal, not that it ended", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open('/bin/sh');
   const w = await farThen(s, 'true');
