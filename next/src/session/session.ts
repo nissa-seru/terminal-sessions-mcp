@@ -81,6 +81,8 @@ class LiveSession implements Session {
   private sentPending: string | undefined;
   private sentOutputs = -1;
   private promptAt: Pos | undefined;
+  /** At a shell without integration: `lastWrite` when `promptAt` was taken, so a prompt drawn later with nothing typed since moves it. */
+  private promptAtWrite = -1;
   private readonly commands = new Map<number, Command>();
   private running: Command | undefined;
   private lastEnded: Command | undefined;
@@ -129,6 +131,7 @@ class LiveSession implements Session {
     this.remember(nonce);
     this.shellName = path.basename(o.shell);
     this.pts = (p as unknown as { ptsName?: string; _pty?: string }).ptsName ?? (p as unknown as { _pty?: string })._pty ?? '';
+    this.lastOutput = mono();
     this.t = new Transcript(o.cols, o.rows, {
       reply: (d) => this.p.write(d),
       pressure: (paused) => (paused ? this.p.pause() : this.p.resume()),
@@ -386,7 +389,10 @@ class LiveSession implements Session {
       if (this.execed && argv !== undefined && !isShell(argv)) return program({ pgid, argv, shell: false }, [reads]);
       const process: Process = { pgid, argv: argv ?? this.shellName, shell: true };
       if ((!this.submitted || this.plain) && this.withoutHooks(reads)) {
-        if (this.submitted || !this.promptAt) this.promptAt = this.t.pos();
+        if (this.submitted || !this.promptAt || this.lastWrite === this.promptAtWrite) {
+          this.promptAt = this.t.pos();
+          this.promptAtWrite = this.lastWrite;
+        }
         this.submitted = false;
         const open = this.running ?? this.runCommand;
         if (open) {
