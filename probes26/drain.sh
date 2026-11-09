@@ -8,7 +8,7 @@ if [ -s "$f" ]; then
   stty min 0 time 1 2>/dev/null
   while :; do
     n=$(wc -c < "$f")
-    dd bs=65536 count=1 2>/dev/null >> "$f"
+    dd bs=65536 count=1 conv=notrunc 2>/dev/null >> "$f"
     [ $(($(wc -c < "$f"))) -gt $((n)) ] && [ $((n)) -lt 1048576 ] || break
   done
 fi
