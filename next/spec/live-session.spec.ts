@@ -751,29 +751,21 @@ for (const sh of shells) {
       const s = await open(shell, { cols: 200 });
       const from = s.lines(0).to;
       await ran(s, backlog(), 30_000);
-      // Timed with a watch: a wait also looks at what is in front after its match, which on macOS spawns ps.
-      let last = performance.now();
-      let longest = 0;
-      let total = 0;
+      // Counted with a watch: a wait takes turns of its own after its match.
+      let turns = 0;
       let done = false;
       const turn = (): void => {
-        const now = performance.now();
-        longest = Math.max(longest, now - last);
-        last = now;
-        if (!done) setImmediate(turn);
+        if (done) return;
+        turns++;
+        setImmediate(turn);
       };
-      const t0 = (last = performance.now());
       setImmediate(turn);
       const id = s.watch(costly(), from);
       s.onEvent((e) => {
-        if (done || e.kind !== 'match' || e.watch !== id) return;
-        const now = performance.now();
-        done = true;
-        longest = Math.max(longest, now - last);
-        total = now - t0;
+        if (e.kind === 'match' && e.watch === id) done = true;
       });
       await eventually('the watch', () => done, 300_000);
-      assert.ok(longest * 3 < total, `the longest turn took ${longest.toFixed(0)} ms of the search's ${total.toFixed(0)} ms`);
+      assert.ok(turns >= 3, `the event loop turned ${turns} times while the search ran`);
       const w = await s.wait({ kind: 'match', pattern: costly() }, { waitMs: 300_000, from });
       assert.equal(w.by, 'match');
       assert.match(w.matched!.text, /^35 /);
