@@ -37,7 +37,7 @@ const SLICE_MS = TICK_MS;
 /** A pattern search fetches the lines it searches this many at a time. */
 const SCAN_CHUNK = 16;
 let sliceEnd: number | undefined;
-/** Counts the turns in which a slice was spent; a search notes the one it last searched in. */
+/** Counts the turns in which a search started a slice; a search notes the one it last searched in. */
 let turn = 0;
 /** Whether this turn's pattern searches have spent their slice; the first search in a turn starts it. */
 function spent(): boolean {
