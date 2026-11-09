@@ -2133,6 +2133,23 @@ test("a shell reached through a program that a local shell with the integration 
   assert.deepEqual(integrated.state === 'prompt' ? integrated.within?.pgid : 'x', w, 'the far shell was reached through script, not through the local bash');
 });
 
+test("a command in a far shell reached from another far shell, which ends there, is no longer followed with the shell below at its prompt again, not as left", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open('/bin/sh');
+  await far(s, which('bash')!);
+  // The second script runs inside the first far shell, on its terminal, so this terminal's foreground group is still the first.
+  await far(s, which('bash')!);
+  const f = s.front();
+  assert.ok(f.state === 'prompt' && f.within, JSON.stringify(f));
+  const e = await s.run('exit', { waitMs: 10_000 });
+  assert.equal(e.kind, 'ended', JSON.stringify(e));
+  const end = e.kind === 'ended' ? e.command.end : undefined;
+  assert.deepEqual([end?.status, end?.unfollowed?.how], [undefined, 'back'], JSON.stringify(end));
+  assert.match(end?.unfollowed?.by ?? '', /script/);
+  const below = s.front();
+  assert.ok(below.state === 'prompt' && below.within, JSON.stringify(below));
+  await s.close({ force: true, deadline: by() });
+});
+
 test("a far command whose carrier is suspended is no longer followed, and its end says the carrier left the terminal, not that it ended", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open('/bin/sh');
   const w = await farThen(s, 'true');

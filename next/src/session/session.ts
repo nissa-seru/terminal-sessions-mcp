@@ -311,10 +311,13 @@ class LiveSession implements Session {
       const next = /^(\d+)\.\w+$/.exec(rest[0] ?? '');
       const below = this.chains.findIndex((c, i) => i < this.chains.length - 1 && integration.nonceText(c.expected) === nonce && Number(next?.[1]) === c.expected.counter + 1);
       if (below >= 0) {
-        // The shell below has the terminal back. Its command ended if its group has no process; otherwise it only left the terminal, as when suspended.
+        // The shell below has its prompt back. Reached through a local group of its own, its command ended if that group has no
+        // process, and otherwise only left the terminal, as when suspended. Through the group that reaches the far shell below, the
+        // local group says nothing about what that shell ran.
         const c = this.chains[below]!;
         const carrier = this.chains[below + 1]!.far!.within;
-        this.drop(below, { by: (c.running ?? c.runCommand)?.text ?? carrier.argv, how: proc.groupAlive(carrier.pgid) ? 'left' : 'ended' });
+        const how = c.far?.within.pgid === carrier.pgid ? 'back' : proc.groupAlive(carrier.pgid) ? 'left' : 'ended';
+        this.drop(below, { by: (c.running ?? c.runCommand)?.text ?? carrier.argv, how });
       }
     }
     const expected = integration.nonceText(this.top.expected);
@@ -381,14 +384,17 @@ class LiveSession implements Session {
    * Whether group `w` holds the terminal: in front itself, or through a process it started. 'ended' once it has no process, and
    * 'left' when the terminal's foreground group is the shell's own, or one whose processes are listed and none descends from `w`.
    * Undefined when that can't be told: the foreground group can't be read, a listing fails or doesn't show `w`'s processes, or
-   * shows none in that group, which then moved under the read. A verdict that a group descends from `w` is kept while it holds
-   * the terminal and `w` has a process, so it's listed once.
+   * shows none in that group, which then moved under the read. A verdict that a group descends from `w` is kept until `w`
+   * itself holds the terminal again or a chain is dropped, so a group is listed once while it holds the terminal.
    */
   private holds(w: number, shell: ReturnType<typeof proc.info>, list: () => ReturnType<typeof proc.family>): true | 'ended' | 'left' | undefined {
     if (!proc.groupAlive(w)) return 'ended';
     const g = shell?.tpgid;
     if (g === undefined) return undefined;
-    if (g === w) return true;
+    if (g === w) {
+      this.carrierSeen.delete(w);
+      return true;
+    }
     if (g === shell!.pgrp) return 'left';
     if (this.carrierSeen.get(w) === g) return true;
     const family = list();
@@ -405,7 +411,7 @@ class LiveSession implements Session {
    * reached through, ended or left the terminal, or the session's shell exited. That shows they're gone from here, not that a
    * command running in one ended, so it ends with no status, as not followed.
    */
-  private drop(i: number, why: { by: string; how: 'ended' | 'left' }): void {
+  private drop(i: number, why: { by: string; how: 'ended' | 'left' | 'back' }): void {
     while (this.chains.length - 1 > i) {
       const c = this.chains.pop()!;
       const open = c.running ?? c.runCommand;
