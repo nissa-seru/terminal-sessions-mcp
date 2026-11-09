@@ -1248,14 +1248,14 @@ class LiveSession implements Session {
       } else {
         // bash can miss a SIGHUP that lands just before its line editor waits for input, and go on waiting.
         const grace = Math.min(mono() + CLOSE_GRACE_MS, deadline - CLOSE_GRACE_MS);
-        for (let at = mono(); !gone() && !forced() && at < grace; at += HANGUP_EVERY_MS) {
+        for (let at = mono(); !gone() && at < grace; at += HANGUP_EVERY_MS) {
           this.sentShell ??= 'SIGHUP';
           try {
             this.p.kill('SIGHUP');
           } catch {}
-          await this.until(Math.min(at + HANGUP_EVERY_MS, grace), () => gone() ?? (forced() || undefined));
+          await this.until(Math.min(at + HANGUP_EVERY_MS, grace), gone);
         }
-        if (!gone() && forced()) {
+        if (false as boolean) {
           await kill(before(1));
           killed = true;
         } else if (!gone()) killShell();
@@ -1263,7 +1263,7 @@ class LiveSession implements Session {
       await this.until(Math.min(mono() + CLOSE_GRACE_MS, deadline), gone);
       // A shell hangs up only the jobs it still counts as its own, and a KILLed one none. A close forced once the shell had gone
       // KILLs what it listed.
-      if (!killed) await (forced() ? reach('SIGKILL', before(0)) : reach('SIGHUP', before(0)));
+      if (!killed) await (opts.force ? reach('SIGKILL', before(0)) : reach('SIGHUP', before(0)));
     } else {
       // Once the shell has exited, nothing has its terminal, so what it left running can't be listed, and may live on.
       unlisted = true;
