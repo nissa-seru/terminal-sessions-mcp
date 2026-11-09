@@ -41,7 +41,7 @@ print("fish:", fish or "none")
 bashv = subprocess.run(["bash", "--version"], capture_output=True, text=True).stdout.splitlines()[0]
 print("bash:", bashv)
 
-if fish:
+if fish and sys.platform != "darwin":
     # A: history append, in an interactive session
     t = drive(["fish", "--no-config", "-i"], [b"history append -- 'echo APPENDED_PROBE'\r", 0.5, b"history search --max 1 | string replace APPENDED_PROBE SEEN_APPENDED\r", 1.0])
     show("A history append", t, ["SEEN_APPENDED", "Unknown", "unknown option", "Expected"])
@@ -63,6 +63,6 @@ show("D bash", t, ["HOOK_DONE", "D_TRAP=[trap -- 'echo USER_TRAP_RAN' SIGINT]", 
 if subprocess.run(["sh", "-c", "command -v zsh"], capture_output=True).returncode == 0:
     rc = "trap 'echo USER_TRAP_RAN' INT\n__h() { setopt localoptions localtraps; trap '' INT; sleep 1; echo HOOK_DONE }\nprecmd_functions+=(__h)\n"
     open("/tmp/probe-zrc", "w").write(rc)
-    t = drive(["zsh", "-f", "-i"], [b". /tmp/probe-zrc\r", 2.0, b"true\r", 0.4, b"\x03", 2.0, b"echo \"E_TRAP=[$(trap)]\"\r", 2.0])
+    t = drive(["zsh", "-f", "-i"], [b". /tmp/probe-zrc\r", 2.0, b"true\r", 0.4, b"\x03", 2.0, b"trap >/tmp/ztraps; echo \"E_TRAP=[$(</tmp/ztraps)]\"\r", 2.0])
     show("E zsh", t, ["HOOK_DONE", "E_TRAP=[trap -- 'echo USER_TRAP_RAN' INT]", "E_TRAP=[]"])
 print("--- done")
