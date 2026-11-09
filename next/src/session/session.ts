@@ -108,6 +108,12 @@ const MAC_LOOK_EVERY_MS = 250;
 /** How long the shell's own read must have been seen before it counts as a builtin read: a bound on the kernel's delivery of output the shell wrote before it began reading, not a proof. */
 const SHELL_READ_FLOOR_MS = 50;
 
+/** A process of a far shell's carrier group with no child in that group, such as the ssh of `sh -c 'ssh h; cat'`, and its command line. */
+interface Leaf {
+  pid: number;
+  argv: string;
+}
+
 /** Where one shell's chain of marks stands: what it has drawn, what was typed or sent at its prompt, and the command it runs. */
 interface Chain {
   expected: Nonce;
@@ -124,7 +130,7 @@ interface Chain {
   refused: number;
   cwd: string;
   /** A shell given the integration with `integrate`: its kind, the local program it runs under, and what its drain sent since the last end mark, as hex. */
-  far?: { kind: integration.FarKind; within: Process; drained: string[] };
+  far?: { kind: integration.FarKind; within: Process; drained: string[]; leaves: Leaf[] };
 }
 
 /** The job a `stop` with a signal sent it to, and the command running then; once that command ends, whether its group holds a stopped process. */
@@ -371,8 +377,17 @@ class LiveSession implements Session {
     const list = (): ReturnType<typeof proc.family> => (family === null ? (family = proc.family(this.pid)) : family);
     let w: number | undefined;
     for (let i = 1; i < this.chains.length; i++) {
-      const by = this.chains[i]!.far?.within;
-      if (!by || by.pgid === this.pid || by.pgid === w) continue;
+      const far = this.chains[i]!.far;
+      const by = far?.within;
+      if (!far || !by) continue;
+      // A group can go on with another program, as `sh -c 'ssh h; exec cat'` does, so each chain's own processes are checked, even
+      // where its group is the session shell's or an earlier chain's verdict stands for it.
+      const left = far.leaves.find((l) => !proc.alive(l.pid));
+      if (left) {
+        this.drop(i - 1, { by: left.argv, how: 'ended' });
+        return undefined;
+      }
+      if (by.pgid === this.pid || by.pgid === w) continue;
       w = by.pgid;
       const h = this.holds(w, shell, list);
       if (h === undefined) return 'unread';
@@ -1101,9 +1116,15 @@ class LiveSession implements Session {
       // A far chain's front names the program it was reached through. What holds the terminal now may be one that chain's shell
       // started here, as ssh from a local shell, and that is what this shell is reached through.
       const g = proc.info(this.pid)?.tpgid;
-      if (g === undefined) return { kind: 'refused', unread: true, front: f };
+      if (g === undefined) return { kind: 'refused', unlisted: true, front: f };
       within = { pgid: g, argv: proc.argv(g) ?? '?', shell: false };
     } else within = f.process;
+    // The carrier is known by its processes too: those of its group with no child in it. Their end ends it, though the group goes on.
+    // At the session shell's own prompt, that's the shell itself.
+    const all = proc.family(this.pid)?.all;
+    const members = all && [{ pid: this.pid, pgrp: this.pid }, ...all].filter((d) => d.pgrp === within.pgid);
+    if (!members?.length) return { kind: 'refused', unlisted: true, front: f };
+    const leaves: Leaf[] = members.filter((m) => !members.some((c) => c.ppid === m.pid)).map((m) => ({ pid: m.pid, argv: proc.argv(m.pid) ?? within.argv }));
     const below = this.top;
     const plainBelow = this.plain && within.pgid !== this.pid;
     const ended = (): boolean => !this.chains.includes(below) || below.atPrompt || (plainBelow && this.lookDue() && this.front().state === 'prompt');
@@ -1136,7 +1157,7 @@ class LiveSession implements Session {
           return { kind: 'incomplete', step: 'hooks', by: stop() ?? 'timeout', front: this.front() };
       }
       const chain = newChain(nonce, '');
-      chain.far = { kind, within, drained: [] };
+      chain.far = { kind, within, drained: [], leaves };
       this.chains.push(chain);
       this.probe!.chain = chain;
       this.lastWrite = mono();
