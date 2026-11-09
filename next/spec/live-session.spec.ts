@@ -1858,6 +1858,27 @@ test('integrate names a shell it has no hooks for, and types nothing more', { sk
   assert.equal((await s.run('echo x', { waitMs: 500 })).kind, 'refused');
 });
 
+test("a shell given the integration above a shell without it is gone once that shell holds the terminal again, and what's typed next is the local shell's", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open('/bin/sh');
+  await far(s, which('bash')!);
+  const integrated = s.front();
+  assert.notEqual(integrated.state === 'prompt' ? integrated.within : undefined, undefined);
+  const e = await s.run('exit', { waitMs: 10_000 });
+  assert.equal(e.kind, 'ended', JSON.stringify(e));
+  assert.equal(e.kind === 'ended' ? e.command.end?.status : 'x', undefined);
+  const f = await eventually('the local shell is in front', () => {
+    const now = s.front();
+    return now.state === 'prompt' && now;
+  });
+  assert.equal(f.state === 'prompt' ? f.within : 'x', undefined);
+  assert.deepEqual(out(s, await ran(s, 'echo local')), ['local']);
+  const job = await s.run('sleep 30', { waitMs: 300 });
+  assert.equal(job.kind, 'running', JSON.stringify(job));
+  const stopped = await s.stop();
+  assert.equal(stopped.within, undefined);
+  assert.equal(stopped.steps[0]?.sent, 'C-c');
+});
+
 /** Runs `body` with a `name` first on PATH that fails after `on()` and runs `real` otherwise. */
 async function failing<T>(name: string, real: string, body: (fails: { on: () => void; off: () => void }) => Promise<T>): Promise<T> {
   const bin = fs.mkdtempSync(path.join(tmp, `${name}-bin-`));
