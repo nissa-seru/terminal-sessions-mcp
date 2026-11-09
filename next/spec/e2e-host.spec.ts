@@ -158,6 +158,8 @@ test("send: paste is refused, with nothing typed, while the program hasn't turne
     assert.match(marker.text, /Nothing was typed: `text` holds the bracketed-paste end marker/);
     const typed = await h.call(caller, 'send', { name: 'q', text: 'z', keys: ['Enter'], wait_for: '^DONE$', wait: 20 });
     assert.deepEqual(reads(typed.text), ['z\r'], typed.text);
+    const all = await h.call(caller, 'read', { name: 'q', match: 'READ:' });
+    assert.deepEqual(reads(all.text), ['z\r'], all.text);
   } finally {
     await h.closeAll();
     fs.rmSync(dir, { recursive: true, force: true });
