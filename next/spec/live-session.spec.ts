@@ -1304,7 +1304,7 @@ async function reachFar(s: Session, shell: string, env: Record<string, string> =
 async function far(s: Session, shell: string, env: Record<string, string> = {}): Promise<void> {
   await reachFar(s, shell, env);
   const r = await s.integrate({ waitMs: 10_000 });
-  assert.equal(r.kind, 'integrated', JSON.stringify(r));
+  assert.equal(r.kind, 'integrated', JSON.stringify({ r, tail: s.lines(Math.max(0, s.lines(0).to - 30)).lines.map((l) => l.slice(0, 160)) }));
 }
 
 for (const sh of shells) {
@@ -1399,6 +1399,24 @@ for (const sh of shells) {
       assert.ok(!s.lines(c.from, after.to).lines.includes('SHOULD_NOT_RUN'), JSON.stringify(s.lines(c.from, after.to).lines));
     });
 
+    test('text typed ahead of a far command past what a terminal holds at once comes back whole, and none of it runs', async () => {
+      const s = await open(shell);
+      await far(s, shell);
+      const gate = newGate();
+      fs.writeFileSync(gate, '');
+      const r = await s.run(holdJob(gate), { waitMs: 300 });
+      assert.equal(r.kind, 'running');
+      const typed = Array.from({ length: 1400 }, (_, i) => `echo LEAKED_${i}\r`).join('');
+      // Through a relay the text takes time to reach the far terminal, and the drain takes what has. So the job ends once some shows.
+      assert.equal((await s.send(typed, { waitMs: 10_000, until: /^echo LEAKED_\d+$/ })).by, 'match');
+      fs.rmSync(gate);
+      assert.equal((await s.wait({ kind: 'end' }, { waitMs: 20_000, from: 0 })).by, 'end');
+      const c = s.command(r.kind === 'running' ? r.command.id : -1);
+      assert.ok(c?.end?.flushed?.includes('LEAKED_1399'), JSON.stringify({ end: { ...c?.end, flushed: c?.end?.flushed?.length }, front: s.front(), tail: s.lines(Math.max(0, s.lines(0).to - 12)).lines.map((l) => l.slice(0, 100)) }));
+      assert.deepEqual(out(s, await ran(s, 'echo AFTER')), ['AFTER']);
+      assert.ok(!s.lines(0).lines.some((l) => /^LEAKED_\d+$/.test(l)));
+    });
+
     test('integrate is refused at a prompt with the integration, the session\'s own or a far one, and shows no nonce', async () => {
       const s = await open(shell);
       assert.equal((await s.integrate({ waitMs: 2000 })).kind, 'refused');
@@ -1450,6 +1468,16 @@ for (const sh of shells) {
       assert.ok(!s.lines(from).lines.some((l) => l.includes('eval')), 'no hooks were typed');
       assert.equal(s.front().state, 'running');
       assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+    });
+
+    test('hooks typed while each prompt waits in a slow prompt hook arrive whole', { skip: sh.name !== 'bash' ? 'the slow hook is a PROMPT_COMMAND' : false }, async () => {
+      // While the hook runs, the terminal is in canonical mode. Once no whole line is waiting there, it keeps at most 4095 bytes
+      // of the next (1024 on macOS) and drops the rest, so a line of the hooks longer than that would arrive cut.
+      const s = await open(shell);
+      await reachFar(s, shell, { PROMPT_COMMAND: 'sleep 0.3' });
+      const r = await s.integrate({ waitMs: 20_000 });
+      assert.equal(r.kind, 'integrated', JSON.stringify(r));
+      assert.deepEqual(out(s, await ran(s, 'echo whole')), ['whole']);
     });
 
     test('hooks whose prompt is drawn after the wait ran out still give the shell the integration', { skip: sh.name !== 'bash' ? 'the held prompt is a PROMPT_COMMAND' : false }, async () => {

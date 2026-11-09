@@ -135,11 +135,11 @@ interface ProbeAnswer {
   zero?: string;
 }
 
-/** The text a far shell's drain sent before an end mark, from its hex pieces, which are taken. */
+/** The text a far shell's drain sent before an end mark, from its hex pieces, which are taken. A piece that output from elsewhere broke into isn't hex, and is left out. */
 const farDrained = (far: { drained: string[] }): string => {
-  const hex = far.drained.join('');
+  const hex = far.drained.filter((p) => /^(?:[0-9a-f]{2})*$/.test(p)).join('');
   far.drained = [];
-  return /^(?:[0-9a-f]{2})*$/.test(hex) ? Buffer.from(hex, 'hex').toString('utf8') : '';
+  return Buffer.from(hex, 'hex').toString('utf8');
 };
 
 const newChain = (expected: Nonce, cwd: string): Chain => ({

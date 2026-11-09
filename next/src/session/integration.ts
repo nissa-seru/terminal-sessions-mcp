@@ -378,12 +378,13 @@ export const PROBE_ZERO_LINE = ` printf '\\033]133;K;;;;;%s\\007' "$0"\r`;
 /**
  * The drain for a shell given the integration by typing, run as `sh -c` with the nonce its end mark
  * closes. It reads as the local drain does, and sends each piece it read as an F mark, in hex, to the
- * terminal, before the hook prints its end mark.
+ * terminal, before the hook prints its end mark. It turns echo off while it reads: text still arriving
+ * would otherwise be echoed into the middle of a mark.
  */
 const DRAIN_FAR = `trap '' INT
 PATH=/usr/bin:/bin:$PATH
 m=$(stty -g 2>/dev/null) || exit 0
-stty -icanon min 0 time 0 2>/dev/null || { stty "$m" 2>/dev/null; exit 0; }
+stty -icanon -echo min 0 time 0 2>/dev/null || { stty "$m" 2>/dev/null; exit 0; }
 n=0
 while [ $n -lt 1048576 ]; do
   c=$(dd bs=65536 count=1 2>/dev/null | od -A n -v -t x1 | tr -d ' \\n')
