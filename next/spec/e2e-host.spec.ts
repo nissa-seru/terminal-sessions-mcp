@@ -169,6 +169,102 @@ test("send: paste is refused, with nothing typed, while the program hasn't turne
   }
 });
 
+test('send: paste reads the mode when it writes, after its wait for a prompt, and a mode turned off during that wait refuses it', { timeout: 60_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-paste-'));
+  const home = path.join(dir, 'home');
+  const gate = path.join(dir, 'gate');
+  fs.mkdirSync(home);
+  const q = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
+  fs.writeFileSync(
+    path.join(home, '.bash_profile'),
+    `bind 'set enable-bracketed-paste off'\n__hk() { if [ -e ${q(gate)} ]; then printf '\\033[?2004h\\nHOOK_WAIT\\n'; while [ -e ${q(gate)} ]; do sleep 0.01; done; printf '\\033[?2004l'; fi; }\nPROMPT_COMMAND=__hk\n`,
+  );
+  let entered!: () => void;
+  const inSend = new Promise<void>((resolve) => (entered = resolve));
+  const h = new Host({
+    openSession: async (o) => {
+      const s = await openSession(o);
+      const send = s.send.bind(s);
+      s.send = (text, opts) => {
+        if ((opts as { paste?: boolean }).paste || text.startsWith('\x1b[200~')) entered();
+        return send(text, opts);
+      };
+      return s;
+    },
+    shell: '/bin/bash',
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TERM: 'xterm-256color', LANG: 'C.UTF-8' },
+    sessionsDir: dir,
+    startedAt: Date.now(),
+  });
+  const caller = { scope: 'g', takes: true, pushes: false };
+  try {
+    assert.equal((await h.call(caller, 'open', { name: 'g', cwd: home })).isError, undefined);
+    fs.writeFileSync(gate, '');
+    const held = await h.call(caller, 'send', { name: 'g', text: 'true\r', wait_for: '^HOOK_WAIT$', wait: 20 });
+    assert.match(held.text, /HOOK_WAIT/, held.text);
+    const sending = h.call(caller, 'send', { name: 'g', text: 'echo PASTE_PROBE', keys: ['Enter'], paste: true, wait: 20 });
+    await inSend;
+    fs.rmSync(gate);
+    const sent = await sending;
+    assert.equal(sent.isError, true, sent.text);
+    assert.match(sent.text, /Nothing was typed: the program in front hasn't turned bracketed paste on\./);
+    const after = await h.call(caller, 'run', { name: 'g', command: 'echo next', wait: 20 });
+    assert.match(after.text, /^next$/m, after.text);
+    assert.doesNotMatch(after.text, /PASTE_PROBE/, after.text);
+  } finally {
+    fs.rmSync(gate, { force: true });
+    await h.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('send: keys are encoded by the cursor-key mode as it stands at the write, after the wait for a prompt', { timeout: 60_000 }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-keys-'));
+  const home = path.join(dir, 'home');
+  const gate = path.join(dir, 'gate');
+  fs.mkdirSync(home);
+  const q = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
+  fs.writeFileSync(
+    path.join(home, '.bash_profile'),
+    `bind -x '"\\eOA": echo APP_UP'\nbind -x '"\\e[A": echo NORMAL_UP'\n__hk() { if [ -e ${q(gate)} ]; then printf '\\nHOOK_WAIT\\n'; while [ -e ${q(gate)} ]; do sleep 0.01; done; printf '\\033[?1h'; fi; }\nPROMPT_COMMAND=__hk\n`,
+  );
+  let entered!: () => void;
+  const inSend = new Promise<void>((resolve) => (entered = resolve));
+  let held = false;
+  const h = new Host({
+    openSession: async (o) => {
+      const s = await openSession(o);
+      const send = s.send.bind(s);
+      s.send = (text, opts) => {
+        if (held) entered();
+        return send(text, opts);
+      };
+      return s;
+    },
+    shell: '/bin/bash',
+    env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: home, TERM: 'xterm-256color', LANG: 'C.UTF-8' },
+    sessionsDir: dir,
+    startedAt: Date.now(),
+  });
+  const caller = { scope: 'k', takes: true, pushes: false };
+  try {
+    assert.equal((await h.call(caller, 'open', { name: 'k', cwd: home })).isError, undefined);
+    fs.writeFileSync(gate, '');
+    const waiting = await h.call(caller, 'send', { name: 'k', text: 'true\r', wait_for: '^HOOK_WAIT$', wait: 20 });
+    assert.match(waiting.text, /HOOK_WAIT/, waiting.text);
+    held = true;
+    const sending = h.call(caller, 'send', { name: 'k', keys: ['Up'], wait_for: '^(APP|NORMAL)_UP$', wait: 20 });
+    await inSend;
+    fs.rmSync(gate);
+    const sent = await sending;
+    assert.match(sent.text, /^APP_UP$/m, sent.text);
+  } finally {
+    fs.rmSync(gate, { force: true });
+    await h.closeAll();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('send: an arrow key follows the cursor-key mode the program set', { timeout: 60_000 }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-keys-'));
   const h = new Host({ openSession, shell: '/bin/bash', env: configuredEnv(process.env, {}), sessionsDir: dir, startedAt: Date.now() });
