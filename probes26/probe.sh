@@ -4,6 +4,12 @@ nodedir=$(dirname "$(dirname "$(command -v node)")")
 docker run --rm -v "$PWD":/w -v "$nodedir":/nodejs -w /w ubuntu:26.04 bash -c '
   apt-get update -qq > /dev/null 2>&1 && apt-get install -y -qq python3 zsh fish procps > /dev/null 2>&1 || echo "apt failed"
   echo "stty: $(stty --version 2>&1 | head -1); dd: $(dd --version 2>&1 | head -1); sh: $(readlink -f /bin/sh)"
+  cd /tmp; printf abc > a; printf xyz | dd bs=65536 count=1 2>/dev/null >> a; echo "append xyz: [$(cat a)]"
+  printf abc > b; dd bs=65536 count=1 2>/dev/null < /dev/null >> b; echo "append nothing: [$(cat b)]"
+  printf abc > c; printf xyz | dd bs=65536 count=1 conv=notrunc 2>/dev/null >> c; echo "notrunc append xyz: [$(cat c)]"
+  printf abc > d; dd bs=65536 count=1 conv=notrunc 2>/dev/null < /dev/null >> d; echo "notrunc append nothing: [$(cat d)]"
+  printf abc > e; printf xyz | /bin/busybox dd bs=65536 count=1 conv=notrunc 2>/dev/null >> e 2>/dev/null; echo "busybox(if any) notrunc: [$(cat e)]"
+  cd /w
   cat > /tmp/steps.sh <<"EOF"
 sleep 1
 m=$(stty -g); echo "stty -g rc=$? m=[$m]"
