@@ -786,13 +786,13 @@ async function firstMatch(re: RegExp, l: Lines, deadline: number, stopped: () =>
 
 const RAN_OUT = `before the ${WAIT_MAX_S} s a call may hold ran out`;
 
-const endedLine = (c: Command): string => `Command ${c.id} ended: ${endingText(c).join(' · ')}.`;
+const endedLine = (c: Command): string => `Command ${c.id}${c.end?.unfollowed ? '' : ' ended'}: ${endingText(c).join(' · ')}.`;
 
 const endOf = (c: Command): Command[] => (c.end ? [c] : []);
 
 const occurrenceOf = (ev: Exclude<SessionEvent, { kind: 'match' }>): object => (ev.kind === 'ended' ? ev.command : ev.kind === 'waiting' ? ev.front : ev.exit);
 
-const typedText = (c: Command): string => `Command ${c.id} was typed${c.end ? `, and ended: ${endingText(c).join(' · ')}` : ', and the close ended its shell before it ended'}.`;
+const typedText = (c: Command): string => `Command ${c.id} was typed${c.end ? `${c.end.unfollowed ? ':' : ', and ended:'} ${endingText(c).join(' · ')}` : ', and the close ended its shell before it ended'}.`;
 
 const turn = (): Promise<void> => new Promise((r) => setImmediate(r));
 
