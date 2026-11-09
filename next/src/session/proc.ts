@@ -4,7 +4,8 @@ import * as fs from 'node:fs';
 const LINUX = process.platform === 'linux';
 /**
  * The numbers of read and readv, whose only wait is for their input, and of splice: x86-64's table, and
- * the generic table arm64, riscv64 and loong64 share. On any other architecture no read is seen.
+ * the generic table arm64, riscv64 and loong64 share. On any other architecture no read is seen, nor
+ * is a 32-bit program's, whose calls are numbered from another table.
  */
 const SYSCALLS: Partial<Record<string, { reads: ReadonlySet<number>; splice: number }>> = {
   x64: { reads: new Set([0, 19]), splice: 275 },
