@@ -284,9 +284,10 @@ export type IntegrateOutcome =
    * shell without a line editor. The line editors of bash, zsh and fish hold it out of that mode at their prompts. A program that holds
    * this terminal raw, such as a connected ssh, hides its far side: a question there can't be seen, and the probe line would answer
    * it. `unread`: this terminal's modes couldn't be read, so whether what is in front reads whole lines itself isn't known.
+   * `unlisted`: what holds this terminal, or its processes, couldn't be read, so the program the shell would be reached through isn't known.
    * `integrating`: another `integrate` call on this session is still typing.
    */
-  | { kind: 'refused'; sent?: true; canonical?: true; unread?: true; integrating?: true; front: Front }
+  | { kind: 'refused'; sent?: true; canonical?: true; unread?: true; unlisted?: true; integrating?: true; front: Front }
   /** A shell answered the probe that has no hooks here (sh, dash, ash, and others). Nothing more was typed. `shell` is its `$0`, when it gave one. */
   | { kind: 'unsupported'; shell?: string; front: Front }
   /**
