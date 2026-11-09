@@ -32,7 +32,7 @@ const isShell = (argv: string): boolean => {
 /** Deadlines, graces and quiet periods; the times a session reports are wall-clock. */
 const mono = (): number => performance.now();
 
-/** Pattern searches in one turn of the event loop, in every session, stop once they've spent this long, after the line or row they're on, and go on in a later turn. */
+/** Pattern searches in one turn of the event loop, in every session, stop once they've spent this long, each after at least one line or row, and go on in a later turn. */
 const SLICE_MS = TICK_MS;
 /** A pattern search fetches the lines it searches this many at a time. */
 const SCAN_CHUNK = 16;
@@ -676,19 +676,22 @@ class LiveSession implements Session {
    * The first line from `s.from` on that matches, each matched on its head within the pattern's window;
    * then, while the alternate screen is active, its first row that matches. A pass begins after each parse,
    * moves `s.from` past frozen lines that didn't match, and counts the lines it searched on their head only.
-   * Once this turn's searches have spent their slice, the pass stops and goes on in a later turn; `now`
-   * begins a pass though nothing was parsed since the last, and searches to its end.
+   * It searches at least one line or row, and once this turn's searches have spent their slice, the pass
+   * stops and goes on in a later turn; `now` begins a pass though nothing was parsed since the last, and
+   * searches to its end.
    */
   private scan(pattern: RegExp, s: Scan, now = false): Match | undefined {
     if (now || s.parses !== this.parses) Object.assign(s, { parses: this.parses, next: s.from, row: 0, live: 0 });
     else if (s.next === undefined) return undefined;
     let n = s.next!;
+    let went = false;
     for (;;) {
       const ls = this.t.lines(n, n + SCAN_CHUNK);
       if (ls.lines.length === 0) break;
       const frozen = ls.lines.length - ls.live;
       for (let i = 0; i < ls.lines.length; i++) {
-        if (!now && spent()) return this.later(s, ls.from + i, 0);
+        if (!now && went && spent()) return this.later(s, ls.from + i, 0);
+        went = true;
         const r = testBounded(pattern, ls.lines[i]!);
         if (r.matched) return { line: ls.from + i, text: ls.lines[i]!, ...(r.clipped && { clipped: true as const }) };
         if (i < frozen) {
@@ -701,7 +704,8 @@ class LiveSession implements Session {
     const screen = this.t.screen();
     if (screen.alt)
       for (let row = s.row; row < screen.rows.length; row++) {
-        if (!now && spent()) return this.later(s, n, row);
+        if (!now && went && spent()) return this.later(s, n, row);
+        went = true;
         const r = testBounded(pattern, screen.rows[row]!);
         if (r.matched) return { line: this.t.end(), text: screen.rows[row]!, row, ...(r.clipped && { clipped: true as const }) };
       }

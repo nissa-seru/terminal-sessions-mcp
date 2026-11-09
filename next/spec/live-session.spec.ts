@@ -734,15 +734,15 @@ for (const sh of shells) {
       assert.equal(w.clipped, 1);
     });
 
-    /** 40 lines of 2,000 characters of words, `TARGET` at the end of lines 35 and 38, and a pattern whose search costs each line its whole length. */
-    const backlog = `awk 'BEGIN{for(i=1;i<=40;i++){printf "%d", i; for(j=0;j<666;j++) printf " ab"; if (i==35||i==38) printf " TARGET"; print ""}}'`;
+    /** `n` lines of 2,000 characters of words, `TARGET` at the end of lines n-5 and n-2, and a pattern whose search costs each line its whole length. */
+    const backlog = (n = 40): string => `awk 'BEGIN{for(i=1;i<=${n};i++){printf "%d", i; for(j=0;j<666;j++) printf " ab"; if (i==${n - 5}||i==${n - 2}) printf " TARGET"; print ""}}'`;
     const costly = (): RegExp => compileUserRegex('(\\w+\\s?){1,80}TARGET');
     const same = { skip: sh.name !== 'bash' ? 'a search is the same in every shell' : false };
 
     test('a pattern wait across a long backlog lets the event loop turn while it searches, and finds the first line that matches', same, async () => {
       const s = await open(shell, { cols: 200 });
       const from = s.lines(0).to;
-      await ran(s, backlog, 30_000);
+      await ran(s, backlog(), 30_000);
       let last = performance.now();
       let longest = 0;
       let done = false;
@@ -766,7 +766,7 @@ for (const sh of shells) {
     test('a watch on lines already printed goes on searching though nothing more is printed, and reports the first line that matches', same, async () => {
       const s = await open(shell, { cols: 200 });
       const from = s.lines(0).to;
-      await ran(s, backlog, 30_000);
+      await ran(s, backlog(), 30_000);
       const events: SessionEvent[] = [];
       s.onEvent((e) => events.push(e));
       const id = s.watch(costly(), from);
@@ -775,10 +775,27 @@ for (const sh of shells) {
       assert.match(m?.kind === 'match' ? m.match.text : '', /^35 /);
     });
 
+    test('a search that is behind lets another session\'s watch go on', same, async () => {
+      const a = await open(shell, { cols: 200 });
+      const from = a.lines(0).to;
+      await ran(a, backlog(80), 30_000);
+      const b = await open(shell);
+      const bFrom = b.lines(0).to;
+      await ran(b, 'echo NEEDLE-$((6 * 7))');
+      const events: SessionEvent[] = [];
+      b.onEvent((e) => events.push(e));
+      let waited = false;
+      const w = a.wait({ kind: 'match', pattern: costly() }, { waitMs: 300_000, from }).then((r) => ((waited = true), r));
+      const id = b.watch(/^NEEDLE-42$/, bFrom);
+      await eventually('the watch', () => events.some((e) => e.kind === 'match' && e.watch === id), 300_000);
+      assert.equal(waited, false, 'the other session\'s search had finished first');
+      assert.equal((await w).by, 'match');
+    });
+
     test('a pattern wait that ends before its search reaches the end says how many lines it had not searched', same, async () => {
       const s = await open(shell, { cols: 200 });
       const from = s.lines(0).to;
-      await ran(s, backlog, 30_000);
+      await ran(s, backlog(), 30_000);
       const w = await s.wait({ kind: 'match', pattern: costly() }, { waitMs: 100, from });
       assert.equal(w.by, 'timeout');
       assert.equal(w.matched, undefined);
