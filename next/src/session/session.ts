@@ -212,6 +212,7 @@ class LiveSession implements Session {
   private execed = false;
   private opened = false;
   private closed = false;
+  private closing: Promise<Closed> | undefined;
 
   constructor(
     o: OpenOptions,
@@ -487,6 +488,7 @@ class LiveSession implements Session {
     await this.t.settled();
     this.exitInfo = exit;
     if (this.t.disposed) return;
+    this.t.keepScreen();
     this.drop(0);
     const c = this.top.running ?? this.top.runCommand;
     this.top.running = this.top.runCommand = undefined;
@@ -767,8 +769,8 @@ class LiveSession implements Session {
     this.top.submitted = true;
     const call = this.enter(opts.take ?? true, opts.signal, id);
     this.lastWrite = mono();
-    this.p.write(cf.line);
     try {
+      this.p.write(cf.line);
       await this.until(deadline, () => {
         if (this.exitInfo || this.closed || opts.signal?.aborted) return true;
         if (this.top.far && this.lookDue()) this.leftFar(proc.info(this.pid));
@@ -806,19 +808,20 @@ class LiveSession implements Session {
     const bytes = opts.paste ? `${PASTE_START}${text}${PASTE_END}${keys}` : text + keys;
     if (!this.prompted) this.frontKey = '';
     if ((this.top.atPrompt || this.plain) && !this.top.submitted) {
-      if (/[\r\n]/.test(bytes)) {
+      // A line break inside a paste is held by the line editor for editing; only the keys after it can submit the line.
+      if (/[\r\n]/.test(opts.paste ? keys : bytes)) {
         this.top.submitted = true;
         this.top.sentPending = undefined;
-      } else this.top.sentPending = (this.top.sentPending ?? '') + bytes;
+      } else this.top.sentPending = (this.top.sentPending ?? '') + (opts.paste ? text + keys : bytes);
     }
     const call = this.enter(opts.take ?? true, opts.signal);
     const sentAt = (this.lastWrite = mono());
-    this.p.write(bytes);
-    this.top.sentOutputs = this.outputs;
     const scan = newScan(from);
     let matched: Match | undefined;
     let by: SendOutcome['by'] = 'timeout';
     try {
+      this.p.write(bytes);
+      this.top.sentOutputs = this.outputs;
       const r = await this.until(deadline, () => {
         if (this.closed) return 'closed' as const;
         if (this.exitInfo) return 'exited' as const;
@@ -972,6 +975,8 @@ class LiveSession implements Session {
         return settled(now) ? now : undefined;
       }, opts.abort)) ?? this.front();
     const step = async (sent: StopStep['sent']): Promise<boolean> => {
+      // Once a close has begun, it ends what runs, and stop sends nothing more.
+      if (this.closed) return true;
       const mine = sent === 'C-c' ? true : this.ours(target.pgid);
       if (sent === 'C-c') {
         this.lastWrite = mono();
@@ -1089,7 +1094,15 @@ class LiveSession implements Session {
     return ls;
   }
 
-  async close(opts: { force?: boolean; deadline: number }): Promise<Closed> {
+  /** A close while one is under way waits for that one, until its own deadline, so neither returns before the first has hung up what it listed. */
+  close(opts: { force?: boolean; deadline: number }): Promise<Closed> {
+    if (!this.closing) return (this.closing = this.shut(opts));
+    let timer: NodeJS.Timeout | undefined;
+    const unconfirmed = new Promise<Closed>((resolve) => (timer = setTimeout(() => resolve({ code: null, signal: 'SIGKILL', unconfirmed: true }), Math.max(0, opts.deadline - mono()))));
+    return Promise.race([this.closing, unconfirmed]).finally(() => clearTimeout(timer));
+  }
+
+  private async shut(opts: { force?: boolean; deadline: number }): Promise<Closed> {
     this.closed = true;
     this.wake();
     if (this.poll) clearTimeout(this.poll);
@@ -1151,6 +1164,10 @@ class LiveSession implements Session {
       await this.until(Math.min(mono() + CLOSE_GRACE_MS, deadline), gone);
       // A shell hangs up only the jobs it still counts as its own, and a KILLed one none.
       if (!opts.force) await reach('SIGHUP', before(0));
+    } else {
+      // Once the shell has exited, nothing has its terminal, so what it left running can't be listed, and may live on.
+      unlisted = true;
+      this.log?.(`session ${JSON.stringify(this.name)}: close couldn't list what the shell left running, since the shell had already exited`);
     }
     const exit = this.exitInfo ?? this.ptyExit;
     this.t.dispose();
