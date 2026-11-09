@@ -314,7 +314,7 @@ class LiveSession implements Session {
         // The shell below has the terminal back. Its command ended if its group has no process; otherwise it only left the terminal, as when suspended.
         const c = this.chains[below]!;
         const carrier = this.chains[below + 1]!.far!.within;
-        this.drop(below, { by: (c.running ?? c.runCommand)?.text ?? carrier.argv, how: proc.groupAlive(carrier.pgid) ? 'left' : 'ended' });
+        this.drop(below, { by: (c.running ?? c.runCommand)?.text ?? carrier.argv, how: 'ended' });
       }
     }
     const expected = integration.nonceText(this.top.expected);
