@@ -215,6 +215,10 @@ class LiveSession implements Session {
   /** Each carrier group, with a foreground group a listing showed descending from it. */
   private readonly carrierSeen = new Map<number, number>();
   private closing: Promise<Closed> | undefined;
+  /** A close with `force` joined the close under way, which goes on as forced from its next step. */
+  private forcedLate = false;
+  /** The strongest signal the close has sent the shell. */
+  private sentShell: 'SIGHUP' | 'SIGKILL' | undefined;
 
   constructor(
     o: OpenOptions,
@@ -1159,12 +1163,22 @@ class LiveSession implements Session {
     return ls;
   }
 
-  /** A close while one is under way waits for that one, until its own deadline, so neither returns before the first has hung up what it listed. */
+  /**
+   * A close while one is under way waits for that one, until its own deadline, so neither returns before the first has hung up what
+   * it listed. With `force`, the close under way goes on as forced from its next step. At its own deadline it says the close is
+   * still under way, and names only a signal that close has sent the shell.
+   */
   close(opts: { force?: boolean; deadline: number }): Promise<Closed> {
     if (!this.closing) return (this.closing = this.shut(opts));
+    if (opts.force && !this.forcedLate) {
+      this.forcedLate = true;
+      this.wake();
+    }
     let timer: NodeJS.Timeout | undefined;
-    const unconfirmed = new Promise<Closed>((resolve) => (timer = setTimeout(() => resolve({ code: null, signal: 'SIGKILL', unconfirmed: true }), Math.max(0, opts.deadline - mono()))));
-    return Promise.race([this.closing, unconfirmed]).finally(() => clearTimeout(timer));
+    const underway = new Promise<Closed>(
+      (resolve) => (timer = setTimeout(() => resolve({ code: null, ...(this.sentShell ? { signal: this.sentShell } : {}), underway: true }), Math.max(0, opts.deadline - mono()))),
+    );
+    return Promise.race([this.closing, underway]).finally(() => clearTimeout(timer));
   }
 
   private async shut(opts: { force?: boolean; deadline: number }): Promise<Closed> {
@@ -1175,7 +1189,9 @@ class LiveSession implements Session {
     let unlisted = false;
     const unreached: NonNullable<Closed['unreached']> = [];
     if (!this.exitInfo) {
+      const forced = (): boolean => opts.force === true || this.forcedLate;
       const killShell = (): void => {
+        this.sentShell = 'SIGKILL';
         try {
           this.p.kill('SIGKILL');
         } catch {}
@@ -1183,9 +1199,10 @@ class LiveSession implements Session {
       const failed = (why: string): void => this.log?.(`session ${JSON.stringify(this.name)}: close couldn't list ${why}`);
       const before = (graces: number): proc.Listing => ({ deadline: deadline - graces * CLOSE_GRACE_MS, failed });
       // Listed before the first signal: once the shell exits, nothing in its session has a terminal.
-      const first = before(opts.force ? 1 : 2);
+      const first = before(forced() ? 1 : 2);
       const onTerminal = (await proc.onTerminal(this.pid, this.pts, first))?.filter((d) => d.pid !== this.pid);
-      const ds = opts.force ? await proc.allDescendants(this.pid, first) : [];
+      let descendantsListed = forced();
+      const ds = descendantsListed ? await proc.allDescendants(this.pid, first) : [];
       unlisted = onTerminal === undefined || ds === undefined;
       const listed = [...(onTerminal ?? []), ...(ds ?? [])];
       /**
@@ -1212,23 +1229,40 @@ class LiveSession implements Session {
         for (const { pgid, error } of refused) if (still?.has(pgid) !== false) unreached.push({ pgid, signal, error });
       };
       const gone = (): Exit | undefined => this.exitInfo ?? this.ptyExit;
-      if (opts.force) {
-        await reach('SIGKILL', first);
+      /** KILLs the listed groups and the shell, listing the shell's descendants first if that wasn't done, as `force` does. */
+      const kill = async (l: proc.Listing): Promise<void> => {
+        if (!descendantsListed && !gone()) {
+          descendantsListed = true;
+          const more = await proc.allDescendants(this.pid, l);
+          if (more === undefined) unlisted = true;
+          else listed.push(...more);
+        }
+        await reach('SIGKILL', l);
         killShell();
+      };
+      let killed = false;
+      if (forced()) {
+        await kill(first);
+        killed = true;
       } else {
         // bash can miss a SIGHUP that lands just before its line editor waits for input, and go on waiting.
         const grace = Math.min(mono() + CLOSE_GRACE_MS, deadline - CLOSE_GRACE_MS);
-        for (let at = mono(); !gone() && at < grace; at += HANGUP_EVERY_MS) {
+        for (let at = mono(); !gone() && !forced() && at < grace; at += HANGUP_EVERY_MS) {
+          this.sentShell ??= 'SIGHUP';
           try {
             this.p.kill('SIGHUP');
           } catch {}
-          await this.until(Math.min(at + HANGUP_EVERY_MS, grace), gone);
+          await this.until(Math.min(at + HANGUP_EVERY_MS, grace), () => gone() ?? (forced() || undefined));
         }
-        if (!gone()) killShell();
+        if (!gone() && forced()) {
+          await kill(before(1));
+          killed = true;
+        } else if (!gone()) killShell();
       }
       await this.until(Math.min(mono() + CLOSE_GRACE_MS, deadline), gone);
-      // A shell hangs up only the jobs it still counts as its own, and a KILLed one none.
-      if (!opts.force) await reach('SIGHUP', before(0));
+      // A shell hangs up only the jobs it still counts as its own, and a KILLed one none. A close forced once the shell had gone
+      // KILLs what it listed.
+      if (!killed) await (forced() ? reach('SIGKILL', before(0)) : reach('SIGHUP', before(0)));
     } else {
       // Once the shell has exited, nothing has its terminal, so what it left running can't be listed, and may live on.
       unlisted = true;

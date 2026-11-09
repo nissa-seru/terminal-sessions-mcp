@@ -2015,6 +2015,71 @@ test('a second close waits for the first, which hangs up what it listed once the
   }
 });
 
+/** A job of its own group that ignores the hangup, as nohup's do, with its pid. */
+const hupProof = async (s: Session): Promise<number> => pidOf(s, await ran(s, `sh -c 'trap "" HUP; while :; do sleep 1; done' & echo "JOB:$!"`), 'JOB');
+
+test('a close with force that joins a gentle close held at its listing makes it forced, so a job that ignores the hangup is KILLed', darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const job = await hupProof(s);
+  const gate = path.join(tmp, `gate-${++gates}`);
+  const held = path.join(tmp, `held-${++gates}`);
+  const fake = fakePs(`*"-t "*) : > '${held}'; while [ ! -e '${gate}' ]; do sleep 0.05; done;;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    const first = s.close({ deadline: by() });
+    await eventually('the gentle close is held at its listing', () => fs.existsSync(held));
+    const second = s.close({ force: true, deadline: by() });
+    fs.writeFileSync(gate, '');
+    const [a] = await Promise.all([first, second]);
+    process.env.PATH = keep;
+    assert.equal(a.signal, 'SIGKILL', JSON.stringify(a));
+    await eventually('the job that ignores the hangup is gone', () => gone(job));
+  } finally {
+    process.env.PATH = keep;
+    fs.writeFileSync(gate, '');
+    killPid(job);
+  }
+});
+
+test('a close with force that joins a gentle close after its hangup went out still KILLs what it listed', darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const job = await hupProof(s);
+  // The shell ignores the hangup too, so the gentle close goes on resending it through its grace.
+  await ran(s, "trap '' HUP");
+  try {
+    const first = s.close({ deadline: by() });
+    await eventually('the hangup went out', () => (s as unknown as { sentShell?: string }).sentShell === 'SIGHUP');
+    const second = s.close({ force: true, deadline: by() });
+    await Promise.all([first, second]);
+    await eventually('the job that ignores the hangup is gone', () => gone(job));
+  } finally {
+    killPid(job);
+  }
+});
+
+test("a close that joins one under way and whose own deadline comes first says it's under way, and names no signal before one was sent", darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const gate = path.join(tmp, `gate-${++gates}`);
+  const held = path.join(tmp, `held-${++gates}`);
+  const fake = fakePs(`*"-t "*) : > '${held}'; while [ ! -e '${gate}' ]; do sleep 0.05; done;;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    const first = s.close({ deadline: by() });
+    await eventually('the first close is held at its listing', () => fs.existsSync(held));
+    const second = await s.close({ deadline: by(300) });
+    assert.deepEqual([second.underway, second.signal, second.unconfirmed], [true, undefined, undefined], JSON.stringify(second));
+    fs.writeFileSync(gate, '');
+    const a = await first;
+    process.env.PATH = keep;
+    assert.equal(a.underway, undefined, JSON.stringify(a));
+  } finally {
+    process.env.PATH = keep;
+    fs.writeFileSync(gate, '');
+  }
+});
+
 test('close reads a ps that exits 1 because every listed process is gone as nothing left to hang up', darwinOnly, async () => {
   const logs: string[] = [];
   const s = await open(which('bash') ?? '/bin/bash', { log: (l) => logs.push(l) });
