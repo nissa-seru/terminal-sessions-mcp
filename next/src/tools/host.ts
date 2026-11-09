@@ -169,7 +169,7 @@ export class Host {
       [...this.entries.values()].map(async (e) => {
         e.closing = true;
         try {
-          await e.session.close();
+          await e.session.close({ deadline: performance.now() + 20_000 });
         } catch (err) {
           this.o.log?.(`closing session ${JSON.stringify(e.name)} of scope ${JSON.stringify(e.scope)} failed: ${(err as Error)?.message ?? String(err)}`);
         }
@@ -250,7 +250,7 @@ export class Host {
       ...(this.o.log ? { log: this.o.log } : {}),
     });
     if (this.stopping) {
-      await session.close({ force: true });
+      await session.close({ force: true, deadline: performance.now() + 20_000 });
       return refused('The daemon stopped while this session started, so its shell is closed.', { error: 'backend_failure' });
     }
     const entry: Entry = { scope: caller.scope, name, session, cursor: 0, unseen: new Map(), watches: new Map(), dying: undefined, closing: false, settling: new Set(), latest: new Map(), off: () => {} };
@@ -533,7 +533,7 @@ export class Host {
 
   private async close(caller: Caller, e: Entry, a: Record<string, unknown>): Promise<ToolResult> {
     e.closing = true;
-    const [exit] = await Promise.all([e.session.close({ force: a.force === true }), Promise.all(e.settling)]);
+    const [exit] = await Promise.all([e.session.close({ force: a.force === true, deadline: performance.now() + 55_000 }), Promise.all(e.settling)]);
     e.off();
     const unseen = [...e.unseen.values()].sort((x, y) => x.at - y.at).map((u) => u.lines.join('\n'));
     if (caller.takes) e.unseen.clear();
