@@ -1287,6 +1287,16 @@ for (const sh of shells) {
   });
 }
 
+/** Takes the terminal out of canonical mode, as a shell's line editor does, says so, reads one line, and exits. */
+const READ_LINE_RAW = "sh -c 'stty -icanon; echo RAW-READY; head -n 1 >/dev/null; stty icanon'";
+/** Runs `READ_LINE_RAW` in `s` and returns once it reads with the terminal out of canonical mode. */
+async function readingRaw(s: Session): Promise<void> {
+  const from = s.lines(0).to - 1;
+  const r = await s.run(READ_LINE_RAW, { waitMs: 200 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  const w = await s.wait({ kind: 'match', pattern: /^RAW-READY$/ }, { waitMs: 5000, from });
+  assert.equal(w.by, 'match');
+}
 let relays = 0;
 /**
  * A command that starts `shell`, with no startup files and an environment of its own, on a terminal of its own through `script`, as
@@ -1472,11 +1482,22 @@ for (const sh of shells) {
       assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
     });
 
-    test('a probe line typed into a program that reads it and ends stops the call at once, by exited', async () => {
+    test('integrate is refused, saying so, while what is in front reads whole lines, and types nothing', async () => {
       const s = await open(shell);
-      const r0 = await s.run('head -n 1 >/dev/null', { waitMs: 200 });
+      const r0 = await s.run('head -n 1', { waitMs: 200 });
       assert.equal(r0.kind, 'running', JSON.stringify(r0));
       await inFront(s, /head/);
+      const r = await s.integrate({ waitMs: 2000 });
+      assert.deepEqual([r.kind, r.kind === 'refused' && r.canonical], ['refused', true], JSON.stringify(r));
+      await s.send('typed-after\r', { waitMs: 5000, quietMs: 200 });
+      await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
+      const o = out(s, s.command(r0.kind === 'running' ? r0.command.id : -1)!);
+      assert.ok(o.includes('typed-after') && !o.some((l) => l.includes('printf')), JSON.stringify(o));
+    });
+
+    test('a probe line typed into a program that reads it and ends stops the call at once, by exited', async () => {
+      const s = await open(shell);
+      await readingRaw(s);
       const r = await s.integrate({ waitMs: 10_000 });
       assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['probe', 'exited'], JSON.stringify(r));
       await s.wait({ kind: 'end' }, { waitMs: 5000, from: 0 });
@@ -1578,9 +1599,7 @@ for (const sh of shells) {
 
 test('a probe line typed into a program a shell without integration started, which reads it and ends, stops the call by exited', async () => {
   const s = await open('/bin/sh');
-  const r0 = await s.run('head -n 1 >/dev/null', { waitMs: 200 });
-  assert.equal(r0.kind, 'running', JSON.stringify(r0));
-  await inFront(s, /head/);
+  await readingRaw(s);
   const r = await s.integrate({ waitMs: 10_000 });
   assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['probe', 'exited'], JSON.stringify(r));
 });

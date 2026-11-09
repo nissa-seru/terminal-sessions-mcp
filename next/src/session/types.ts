@@ -247,9 +247,12 @@ export type IntegrateOutcome =
   /**
    * Nothing was typed: a shell with the integration is at its prompt, drawn or not (the session's own, or one given it before), the
    * shell exited, or the call was cancelled first. `sent`: a line was sent at that prompt and hasn't started yet, so what is in front
-   * may be a question, such as a password, that anything typed would answer.
+   * may be a question, such as a password, that anything typed would answer. `canonical`: the terminal is in canonical mode, so what
+   * is in front reads whole lines itself, such as a password or a yes/no question, or a shell without a line editor. The line editors
+   * of bash, zsh and fish hold it out of that mode at their prompts. Through a relay that already holds it raw, such as an ssh
+   * given the integration, a question further on can't be seen.
    */
-  | { kind: 'refused'; sent?: true; front: Front }
+  | { kind: 'refused'; sent?: true; canonical?: true; front: Front }
   /** A shell answered the probe that has no hooks here (sh, dash, ash, and others). Nothing more was typed. `shell` is its `$0`, when it gave one. */
   | { kind: 'unsupported'; shell?: string; front: Front }
   /**
@@ -308,7 +311,8 @@ export interface Session {
    * Gives the shell now in front the integration, typed, so that `run` types there and its marks give the front, statuses and
    * the directory until it exits; then the shell it was typed from is in front again. It types a probe line, then that shell's hooks,
    * into whatever holds the terminal, so it's for a shell at its prompt. Refused at the prompt of a shell with the integration, from
-   * its end mark on, and while a line sent there hasn't started. If what it types into ends before the hooks are all typed, it stops.
+   * its end mark on, while a line sent there hasn't started, and while the terminal is in canonical mode. If what it types into ends
+   * before the hooks are all typed, it stops.
    */
   integrate(opts: { waitMs: number; signal?: AbortSignal }): Promise<IntegrateOutcome>;
   /** Lists the processes on the session's terminal first. Then it hangs up the shell, again every 500 ms while it is there, and KILLs it if it is still there after a grace. Once the shell is gone, it hangs up each listed group, and continues each group the hangup reached. A process that left the terminal with setsid isn't listed, so it lives on. With `force`, at once KILLs every listed group and every group the shell started, then the shell. Resolves with the exit, at once if it had exited. */

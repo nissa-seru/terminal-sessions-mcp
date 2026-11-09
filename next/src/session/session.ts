@@ -962,6 +962,8 @@ class LiveSession implements Session {
     if (f.state === 'exited' || this.prompted || by()) return { kind: 'refused', front: f };
     // A shell with marks is at its prompt from its end mark on, drawn or not; a line sent there that hasn't started may reach a question.
     if (this.top.atPrompt && !this.plain) return { kind: 'refused', front: f, ...(this.top.submitted && { sent: true as const }) };
+    // At its prompt a line editor holds the terminal out of canonical mode; ssh, su and sudo ask for a password or a yes/no in it.
+    if (proc.modes(this.pts)?.canonical === true) return { kind: 'refused', canonical: true, front: f };
     const within: Process = f.state === 'prompt' ? { pgid: this.pid, argv: proc.info(this.pid)?.argv ?? this.shellName, shell: true } : f.process;
     const below = this.top;
     const plainBelow = this.plain && within.pgid !== this.pid;
