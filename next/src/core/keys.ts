@@ -269,7 +269,6 @@ export function decodeKey(name: string, opts: KeyOptions = {}): string {
   throw bad();
 }
 
-/** The bracketed-paste frame a program that turned the mode on reads a paste between. */
 export const PASTE_START = '\x1b[200~';
 export const PASTE_END = '\x1b[201~';
 
