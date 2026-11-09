@@ -4,6 +4,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { openSession } from '../next/dist/src/session/session.js';
+import * as proc from '../next/dist/src/session/proc.js';
+const times = { onTerminal: [], descendants: [], held: [] };
 
 const N = Number(process.env.N ?? 60);
 const shellName = process.argv[2] ?? 'fish';
@@ -32,7 +34,13 @@ for (let i = 0; i < N; i++) {
     process.kill(pid, 0);
     alive = true;
   } catch {}
-  if (exit.unlisted || i < 3) {
+  for (const l of logs) {
+    const m = /onTerminal=\S+ (\d+)ms descendants=\S+ (\d+)ms/.exec(l);
+    if (m) (times.onTerminal.push(+m[1]), times.descendants.push(+m[2]));
+    const h = /held\(SIGKILL\)=\S+ of \d+ listed (\d+)ms/.exec(l);
+    if (h) times.held.push(+h[1]);
+  }
+  if (exit.unlisted || i < 2) {
     if (exit.unlisted) bad++;
     console.log(`#${i} run=${r.kind} pid=${pid} close ${ms}ms unlisted=${exit.unlisted} unreached=${JSON.stringify(exit.unreached)} aliveAfter=${alive} | ${logs.filter((l) => l.startsWith('PROBE')).join(' | ')}`);
   }
@@ -40,4 +48,5 @@ for (let i = 0; i < N; i++) {
     process.kill(pid, 'SIGKILL');
   } catch {}
 }
-console.log(`== ${shellName}: ${bad} of ${N} unlisted`);
+const q = (a) => { const b = [...a].sort((x, y) => x - y); return `n=${b.length} median=${b[Math.floor(b.length / 2)]} p95=${b[Math.floor(b.length * 0.95)]} max=${b.at(-1)}`; };
+console.log(`== ${shellName}: ${bad} of ${N} unlisted; ms onTerminal ${q(times.onTerminal)}; descendants ${q(times.descendants)}; held ${q(times.held)}; failures ${JSON.stringify(proc.failures.slice(0, 10))}`);

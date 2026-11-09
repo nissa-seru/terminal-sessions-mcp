@@ -27,6 +27,8 @@ const CHILDREN_FILES = LINUX && fs.existsSync(`/proc/self/task/${process.pid}/ch
 const MAX_DESCENDANTS = 1024;
 /** How long a spawned `ps` or `stty` may take: a hung one stalls the daemon's loop this long. */
 const SPAWN_TIMEOUT_MS = 500;
+/** Probe only: the last listing failure, by function. */
+export const failures: string[] = [];
 
 export interface Groups {
   pgrp: number;
@@ -111,8 +113,10 @@ export function onTerminal(shell: number, pts: string): Proc[] | undefined {
       const [p, g] = line.trim().split(/\s+/).map(Number);
       if (p! > 0 && g! > 0) out.push({ pid: p!, pgrp: g! });
     }
+    if (!out.some((d) => d.pid === shell)) failures.push(`onTerminal: shell ${shell} not among ${out.length}`);
     return out.some((d) => d.pid === shell) ? out : undefined;
-  } catch {
+  } catch (e) {
+    failures.push(`onTerminal: ${(e as Error).message?.slice(0, 160)}`);
     return undefined;
   }
 }
@@ -144,7 +148,8 @@ function states(listed: Proc[]): Array<{ pgrp: number; state: string }> | undefi
       if (state && group.get(Number(p)) === Number(g)) out.push({ pgrp: Number(g), state });
     }
     return out;
-  } catch {
+  } catch (e) {
+    failures.push(`states: ${(e as Error).message?.slice(0, 160)}`);
     return undefined;
   }
 }
@@ -218,6 +223,7 @@ export function descendants(pid: number, all = false): Proc[] | undefined {
         } catch {}
       }
     } else for (const [p, pp, g] of execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf8', timeout: SPAWN_TIMEOUT_MS }).trim().split('\n').map((l) => l.trim().split(/\s+/).map(Number))) add(p!, pp!, g!);
+    if (!listed) failures.push(`descendants: ${pid} not listed`);
     if (!listed) return undefined;
     const out: Proc[] = [];
     const todo = [pid];
@@ -228,7 +234,8 @@ export function descendants(pid: number, all = false): Proc[] | undefined {
         if (!all && out.length > MAX_DESCENDANTS) return undefined;
       }
     return out;
-  } catch {
+  } catch (e) {
+    failures.push(`descendants: ${(e as Error).message?.slice(0, 160)}`);
     return undefined;
   }
 }
