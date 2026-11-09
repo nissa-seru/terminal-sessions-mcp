@@ -472,8 +472,8 @@ export function farHooks(kind: FarKind, nonce: Nonce, call: string): string[] {
     i = j;
   }
   if (kind === 'fish')
-    return [` set -g fish_history ''; set -g __tsm_h ''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` set __tsm_h "$__tsm_h"'${p}'${ack(kind, call, i + 1)}\r`), ` eval (printf '%b' "$__tsm_h" | string collect); set -e __tsm_h\r`];
-  return [` unset HISTFILE; __tsm_h=''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` __tsm_h=$__tsm_h'${p}'${ack(kind, call, i + 1)}\r`), ` eval "$(printf '%b' "$__tsm_h")"; unset __tsm_h\r`];
+    return [` set -g fish_history ''${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` set ${i ? '' : '-g '}__tsm_h ${i ? '"$__tsm_h"' : ''}'${p}'${ack(kind, call, i + 1)}\r`), ` eval (printf '%b' "$__tsm_h" | string collect); set -e __tsm_h\r`];
+  return [` unset HISTFILE${ack(kind, call, 0)}\r`, ...pieces.map((p, i) => ` __tsm_h=${i ? '$__tsm_h' : ''}'${p}'${ack(kind, call, i + 1)}\r`), ` eval "$(printf '%b' "$__tsm_h")"; unset __tsm_h\r`];
 }
 
 /**

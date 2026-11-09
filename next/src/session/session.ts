@@ -21,7 +21,10 @@ const CLOSE_GRACE_MS = 2000;
 const HANGUP_EVERY_MS = 500;
 const RECENT_NONCES = 64;
 const MAX_COMMANDS = 10_000;
-/** The longest line `run` types into a shell given the integration by typing: zsh's and bash 3's line editors take time that grows with its square. */
+/**
+ * The longest line `run` types into a shell given the integration by typing. zsh's and bash 3's line editors take time that grows
+ * with its square: on GitHub's macOS runners, in one run each, an 8 KiB line took them 0.8 to 1.5 s, and 16 KiB 2.5 to 4.8 s.
+ */
 const FAR_MAX_TYPED = 8192;
 /** The kept commands' text and discarded input, at most, besides the count: the frozen transcript's bound. */
 const MAX_COMMAND_CHARS = 6 * 1024 * 1024;

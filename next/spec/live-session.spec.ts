@@ -1346,6 +1346,8 @@ for (const sh of shells) {
       const home = lastHome();
       const file = sh.name === 'fish' ? path.join(home, 'far-data', 'fish', 'fish_history') : path.join(home, 'far-history');
       const env: Record<string, string> = sh.name === 'fish' ? { XDG_DATA_HOME: path.join(home, 'far-data') } : sh.name === 'bash' ? { HISTFILE: file, PROMPT_COMMAND: 'history -a' } : { HISTFILE: file, SAVEHIST: '1000', HISTSIZE: '1000' };
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, '');
       await reachFar(s, shell, env, sh.name === 'zsh' ? ['-o', 'incappendhistory'] : []);
       const typed = await s.send('echo before-integrate\r', { waitMs: 5000, until: /^before-integrate$/ });
       assert.equal(typed.by, 'match');
@@ -1361,7 +1363,11 @@ for (const sh of shells) {
       const saved = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
       t.diagnostic(`saved: ${JSON.stringify(saved)}`);
       assert.match(saved, /before-integrate/, 'the far shell saved what was typed before');
+      // What may be there is plumbing with no nonce: the probe line, and in zsh, which saves a line as it's entered, the line
+      // that turns saving off.
       assert.doesNotMatch(saved, /after-integrate|__tsm|\d{20}/, saved);
+      const after = saved.slice(saved.indexOf('before-integrate'));
+      assert.ok(after.split('\n').filter((l) => /\b(printf|HISTFILE|fish_history)\b/.test(l)).length <= 2, saved);
     });
 
     test('a far command reads as running, never waiting; stop types only C-c there, and a signal is refused', async () => {
@@ -1451,7 +1457,8 @@ for (const sh of shells) {
       const hold = await s.run('sleep 300', { waitMs: 300 });
       assert.equal(hold.kind, 'running');
       const relay = outer.state === 'prompt' ? outer.within!.pgid : 0;
-      // TERM, as a dropped connection ends ssh: the relay puts the terminal back as it found it. A KILLed one leaves it raw.
+      // TERM, as a dropped connection ends ssh. util-linux's script then puts the terminal back as it found it; BSD's leaves it
+      // without output processing, so a newline there moves down without returning, and a line of spaces can follow.
       process.kill(-relay, 'SIGTERM');
       await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
       const f = s.front();
@@ -1460,7 +1467,7 @@ for (const sh of shells) {
       const c = s.command(hold.kind === 'running' ? hold.command.id : -1);
       assert.equal(c?.end?.status, undefined);
       assert.ok(c?.end, 'the far command ended with no status');
-      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+      assert.deepEqual(out(s, await ran(s, 'echo home')).filter((l) => l.trim()), ['home']);
     });
 
     test('a wait that runs out types nothing more: a probe that answers late changes nothing, and a new call integrates', async () => {

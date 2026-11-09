@@ -247,8 +247,9 @@ export type IntegrateOutcome =
   | { kind: 'unsupported'; shell?: string; front: Front }
   /**
    * The call stopped before the step it names was complete, and nothing more is typed. `probe`: the probe line was typed and no
-   * shell answered. `hooks`: the hooks were typed and no prompt with them was drawn yet; if one is drawn later, the shell has the
-   * integration from then on. `exited`: the session's shell exited, or, at `hooks`, so did the shell the hooks were typed into.
+   * shell answered. `hooks`: the hooks go in pieces, each typed once the one before has run, and they weren't all typed, or the
+   * last was and no prompt with them was drawn yet. Only the last puts them to use: if it was typed and a prompt is drawn later,
+   * the shell has the integration from then on. `exited`: the session's shell exited, or, at `hooks`, so did the shell the hooks were typed into.
    */
   | { kind: 'incomplete'; step: 'probe' | 'hooks'; by: 'timeout' | 'cancelled' | 'exited' | 'closed'; front: Front };
 
