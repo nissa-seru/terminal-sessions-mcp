@@ -770,7 +770,7 @@ class LiveSession implements Session {
       if (before.trim()) return before;
     }
     const text = this.promptLine(b);
-    if (this.top.sentAt !== b && cur.line === b.line && cur.col === b.col) this.top.rest = { at: b, text };
+    if (this.top.sentAt !== b && cur.line >= 0) this.top.rest = { at: b, text };
     if (text.trim() && !(this.top.rest?.at === b && this.top.rest.text === text)) return text.trim();
     const sent = this.top.sentPending;
     return sent !== undefined && /[^\x00-\x20\x7f]/.test(sent) && (this.outputs === this.top.sentOutputs || !this.t.caughtUp) ? sent : undefined;
