@@ -343,23 +343,24 @@ export class Host {
   }
 
   private async send(caller: Caller, e: Entry, a: Record<string, unknown>, signal: AbortSignal | undefined, held: Held): Promise<ToolResult> {
-    let bytes: string;
-    try {
-      bytes = inputBytes(a.text as string | undefined, a.keys as string[] | undefined, e.session.keyOptions());
-    } catch (err) {
-      if (err instanceof TermError) return refused(`\`keys\`: ${err.message}. Nothing was typed.`, { error: err.code });
-      throw err;
-    }
-    if (bytes === '') return refused('Nothing to send: give `text`, `keys`, or both.', { error: 'invalid_argument' });
-    if (a.paste === true) {
-      const text = (a.text as string | undefined) ?? '';
+    const text = (a.text as string | undefined) ?? '';
+    const paste = a.paste === true;
+    if (paste) {
       if (text === '') return refused('Nothing was typed: `paste` sends `text` as a paste, so it needs `text`.', { error: 'invalid_argument' });
       if (text.includes(PASTE_END)) return refused('Nothing was typed: `text` holds the bracketed-paste end marker, ESC [ 2 0 1 ~, which would end the paste early.', { error: 'invalid_argument' });
       if (!(await e.session.bracketedPaste())) {
         return refused(`${this.status(e, e.session.front())}\nNothing was typed: the program in front hasn't turned bracketed paste on, so it can't tell a paste from typing. \`send\` without \`paste\` types the text.`, { error: 'invalid_argument', front: e.session.front() });
       }
-      bytes = PASTE_START + bytes.slice(0, text.length) + PASTE_END + bytes.slice(text.length);
     }
+    let keys: string;
+    try {
+      keys = inputBytes(undefined, a.keys as string[] | undefined, e.session.keyOptions());
+    } catch (err) {
+      if (err instanceof TermError) return refused(`\`keys\`: ${err.message}. Nothing was typed.`, { error: err.code });
+      throw err;
+    }
+    const bytes = paste ? PASTE_START + text + PASTE_END + keys : text + keys;
+    if (bytes === '') return refused('Nothing to send: give `text`, `keys`, or both.', { error: 'invalid_argument' });
     const until = a.wait_for !== undefined ? this.regex(a.wait_for as string, 'wait_for', 'nothing was typed') : undefined;
     const r = await e.session.send(bytes, { waitMs: this.waitMs(a), take: caller.takes, ...(until ? { until } : {}), ...(signal ? { signal } : {}) });
     held.took = r.took;
