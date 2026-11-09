@@ -637,7 +637,7 @@ class LiveSession implements Session {
     if (!this.plain) return false;
     if (reads) return true;
     const canonical = proc.modes(this.pts)?.canonical;
-    if (canonical === undefined) return reads === false ? false : undefined;
+    if (canonical === undefined) return false;
     return !canonical;
   }
 
