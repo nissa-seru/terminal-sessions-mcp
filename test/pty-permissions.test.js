@@ -1,0 +1,24 @@
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+test('postinstall makes executable every spawn-helper node-pty can load', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsm-pty-'));
+  try {
+    const helpers = ['build/Release/spawn-helper', 'build/Debug/spawn-helper', 'prebuilds/darwin-arm64/spawn-helper', 'prebuilds/darwin-x64/spawn-helper'];
+    for (const f of helpers) {
+      fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      fs.writeFileSync(path.join(dir, f), '');
+      fs.chmodSync(path.join(dir, f), 0o644);
+    }
+    fs.mkdirSync(path.join(dir, 'prebuilds', 'win32-x64'), { recursive: true });
+    const out = execFileSync(process.execPath, [path.join(__dirname, '..', 'scripts', 'pty-permissions.js'), dir], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    assert.strictEqual(out, '');
+    for (const f of helpers) assert.strictEqual(fs.statSync(path.join(dir, f)).mode & 0o777, 0o755, f);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
