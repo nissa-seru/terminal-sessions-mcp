@@ -62,6 +62,9 @@ step('started')
 read_until(fd, rb'P> ')
 step('first prompt')
 raw = {}
+if SHELL.endswith('bash'):
+    os.write(fd, b'set +H\n')  # bash 3.2 expands the `!` in `$!;` as history
+    read_until(fd, rb'P> ', 2)
 cmds = [
     ('normal', 'sleep 601 & echo J=normal:$!'),
     ('disowned', 'sleep 602 & echo J=disowned:$!; disown'),
