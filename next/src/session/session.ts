@@ -112,6 +112,7 @@ class LiveSession implements Session {
   readonly openedAt = Date.now();
   private readonly t: Transcript;
   private readonly pts: string;
+  private readonly log: ((line: string) => void) | undefined;
   private readonly shellName: string;
   private expected: Nonce;
   private readonly recent: string[] = [];
@@ -168,6 +169,7 @@ class LiveSession implements Session {
     private readonly argvAtOpen: string,
   ) {
     this.name = o.name;
+    this.log = o.log;
     this.pid = p.pid;
     this.cwdNow = o.cwd;
     this.expected = nonce;
@@ -903,7 +905,10 @@ class LiveSession implements Session {
     const exit = this.exitInfo ?? this.ptyExit;
     this.t.dispose();
     // A process just hung up can still be writing here as it exits, so a removal that meets a file written meanwhile tries again.
-    await fs.promises.rm(this.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    // The shell is gone by then, and what's left harms nothing in its private parent, so a removal that still fails doesn't fail close.
+    await fs.promises
+      .rm(this.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+      .catch((e: Error) => this.log?.(`session ${JSON.stringify(this.name)} closed, but its directory ${this.dir} wasn't removed: ${e.message}`));
     const closed: Closed = exit ? { ...exit } : { code: null, signal: 'SIGKILL', unconfirmed: true };
     if (unlisted) closed.unlisted = true;
     if (unreached.length) closed.unreached = unreached;

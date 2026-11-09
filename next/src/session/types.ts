@@ -29,6 +29,8 @@ export interface OpenOptions {
   waitMs: number;
   /** Linux: the shell's oom_score_adj; 0 leaves it alone. */
   oomScoreAdj?: number;
+  /** Where the session writes what no caller is told, such as a directory `close` couldn't remove. */
+  log?: (line: string) => void;
 }
 
 /**

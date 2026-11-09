@@ -245,6 +245,7 @@ export class Host {
       nextCommandId: () => this.nextId++,
       waitMs: this.waitMs(a),
       ...(this.o.oomScoreAdj ? { oomScoreAdj: this.o.oomScoreAdj } : {}),
+      ...(this.o.log ? { log: this.o.log } : {}),
     });
     if (this.stopping) {
       await session.close({ force: true });
