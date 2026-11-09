@@ -1056,7 +1056,7 @@ class LiveSession implements Session {
     return ls;
   }
 
-  async close(opts: { force?: boolean } = {}): Promise<Closed> {
+  async close(opts: { force?: boolean; deadline?: number } = {}): Promise<Closed> {
     this.closed = true;
     this.wake();
     if (this.poll) clearTimeout(this.poll);
