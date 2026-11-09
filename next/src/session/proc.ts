@@ -187,7 +187,7 @@ function statesHere(listed: Proc[]): State[] {
 
 /** The same from `ps`'s answer; undefined, with the reason, when it gave none. */
 function statesFrom(s: Spawned, timeoutMs: number, listed: Proc[], fail: (why: string) => undefined): State[] | undefined {
-  // ps exits 1 when a pid it was given is gone, and still lists the others.
+  // ps exits 1 when every pid it was given is gone. With some gone and some left, it lists those left and exits 0.
   if (s.status !== 0 && s.status !== 1) return fail(failure(s, timeoutMs));
   const group = new Map(listed.map((d) => [d.pid, d.pgrp]));
   const out: State[] = [];

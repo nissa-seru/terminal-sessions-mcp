@@ -1767,12 +1767,10 @@ test('close that runs out of time while ps lists logs how long ps had', darwinOn
   }
 });
 
-test('close reads the groups still held from a ps that exits 1 because a listed process is gone', darwinOnly, async () => {
+test('close reads a ps that exits 1 because every listed process is gone as nothing left to hang up', darwinOnly, async () => {
   const logs: string[] = [];
   const s = await open(which('bash') ?? '/bin/bash', { log: (l) => logs.push(l) });
-  const c = await ran(s, 'sleep 300 & echo "HUNG:$!"; sleep 300 & echo "JOB:$!"; disown');
-  const hung = pidOf(s, c, 'HUNG');
-  const job = pidOf(s, c, 'JOB');
+  const hung = pidOf(s, await ran(s, 'sleep 300 & echo "HUNG:$!"'), 'HUNG');
   const gate = path.join(tmp, `gate-${++gates}`);
   const fake = fakePs(`*stat=*) while [ ! -e '${gate}' ]; do sleep 0.05; done;;`);
   const keep = process.env.PATH;
@@ -1791,12 +1789,10 @@ test('close reads the groups still held from a ps that exits 1 because a listed 
     const exit = await closing;
     process.env.PATH = keep;
     assert.equal(exit.unlisted, undefined, logs.join('\n'));
-    await eventually('the disowned job is gone', () => gone(job));
   } finally {
     process.env.PATH = keep;
     fs.writeFileSync(gate, '');
     killPid(hung);
-    killPid(job);
   }
 });
 
