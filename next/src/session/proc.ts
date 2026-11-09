@@ -59,7 +59,7 @@ function psAsync(args: string[], timeoutMs: number): Promise<Spawned> {
     execFile('ps', args, { encoding: 'utf8', timeout: timeoutMs }, (e, stdout) => {
       if (!e) return resolve({ status: 0, stdout, timedOut: false });
       const x = e as ExecFileException;
-      resolve({ status: typeof x.code === 'number' ? x.code : null, stdout: typeof stdout === 'string' ? stdout : '', timedOut: x.killed === true, error: x.message.split('\n')[0]! });
+      resolve({ status: typeof (x as { status?: unknown }).status === 'number' ? ((x as { status?: number }).status as number) : null, stdout: typeof stdout === 'string' ? stdout : '', timedOut: x.killed === true, error: x.message.split('\n')[0]! });
     });
   });
 }
