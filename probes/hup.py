@@ -43,7 +43,8 @@ cmds = [
     ('normal', 'sleep 601 & echo J=normal:$!'),
     ('disowned', 'sleep 602 & echo J=disowned:$!; disown'),
     ('doublefork', '(sleep 603 & echo J=doublefork:$!)'),
-    ('setsid', "python3 -c 'import os,time; os.setsid(); print(\"J=setsid:%d\" % os.getpid(), flush=True); time.sleep(604)' &"),
+    # a job leads its own group, and setsid() refuses a group leader, so fork first, as setsid(1) does
+    ('setsid', "python3 -c 'import os,sys,time; os.fork() and sys.exit(0); os.setsid(); print(\"J=setsid:%d\" % os.getpid(), flush=True); time.sleep(604)' &"),
     ('nohup', 'nohup sleep 605 >/dev/null 2>&1 & echo J=nohup:$!'),
     ('stopped_disowned', 'sleep 606 & p=$!; kill -STOP $p; echo J=stopped_disowned:$p; disown'),
 ]
