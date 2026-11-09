@@ -352,7 +352,7 @@ class LiveSession implements Session {
     this.lastLook = mono();
     if (shell?.tpgid === undefined || shell.tpgid !== shell.pgrp) return;
     const i = this.chains.findIndex((c) => c.far !== undefined && c.far.within.pgid !== shell.pgrp);
-    if (i > 0) this.drop(i - 1);
+    void i;
   }
 
   /** The shell holding chain `i` gave an end mark, or holds the terminal again, so every shell given the integration above it has exited. A command running in one ends with no status, as at a shell's exit. */
