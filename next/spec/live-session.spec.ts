@@ -1010,6 +1010,32 @@ for (const sh of shells) {
       assert.equal(text.slice(65_526, 65_546), '[redacted]..........');
     });
 
+    test('the live nonce whose head crosses a 64 Ki cut at the end of a freeze never shows, and no line changes as it freezes', { skip: sh.name !== 'bash' ? 'the transcript is the same in every shell' : false }, async () => {
+      // At 21 columns a row ends at 65,541 = 3,121 × 21 characters: a cut at 65,536, then 5 more. The
+      // nonce starts 8 characters before that row's end, so its head crosses the cut and its tail starts
+      // the next row. Entering the alternate screen freezes through the row above the cursor, which is
+      // that row; the rows above the screen never reach the cut before it.
+      const s = await open(shell, { cols: 21 });
+      const gate = newGate();
+      fs.writeFileSync(gate, '');
+      const r = await s.run(`head -c 65533 /dev/zero | tr '\\0' x; printf '%sxxxx' "$__tsm_r"; ${holdJob(gate)}; printf '\\033[?1049h\\033[?1049l'; echo`, { waitMs: 200 });
+      assert.equal(r.kind, 'running');
+      const c = (r as { command: Command }).command;
+      const before = await eventually(
+        'the line written',
+        () => {
+          const l = s.lines(c.from);
+          return l.lines.join('').length === 65_557 && l;
+        },
+        30_000,
+      );
+      assert.deepEqual(before.lines, [`${'x'.repeat(65_533)}[re`, 'dacted]..........xxxx']);
+      fs.rmSync(gate);
+      await eventually('the end', () => c.end, 30_000);
+      assert.deepEqual(s.lines(before.from, before.to).lines, before.lines);
+      assert.equal(out(s, c).join(''), `${'x'.repeat(65_533)}[redacted]..........xxxx`);
+    });
+
     test('a wait cancelled after a command ended returns that end among what it took', async () => {
       const s = await open(shell);
       const gate = newGate();

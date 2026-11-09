@@ -65,6 +65,8 @@ export class Transcript {
       reply: (data: string) => void;
       pressure: (paused: boolean) => void;
       redact: (text: string) => string;
+      /** The longest text `redact` replaces. It replaces only whole texts, so a freeze keeps this much of a partial line's end unfrozen. */
+      redactSpan: number;
       /** A mark's payload, as the parser meets it. Return true to start a new line there. */
       mark: (payload: string, at: Pos) => boolean;
     },
@@ -329,8 +331,14 @@ export class Transcript {
     this.partial = b.getLine(upto + 1)?.isWrapped ? (lines.pop() ?? '') : '';
     for (const l of lines) this.push(this.io.redact(l));
     if (this.partial.length > MAX_LINE) {
+      // A text to redact whose head ends the partial goes on in the next row, so redacting the partial
+      // can't replace it. The partial keeps every piece that holds part of its last redactSpan - 1
+      // characters: a text that reaches a frozen piece then lies wholly in the partial, which was
+      // redacted. The kept text starts at a cut, so the live line is cut where it was.
       const ps = pieces(this.io.redact(this.partial));
-      this.partial = ps.pop()!;
+      let kept = ps.pop()!;
+      while (ps.length && kept.length < this.io.redactSpan - 1) kept = ps.pop()! + kept;
+      this.partial = kept;
       for (const piece of ps) this.push(piece);
     }
     for (const s of this.splits) if (s.marker.line <= upto) s.marker.dispose();

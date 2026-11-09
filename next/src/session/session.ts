@@ -57,7 +57,11 @@ function spent(): boolean {
   return mono() >= sliceEnd;
 }
 
-const randomDigits = (): string => Array.from({ length: 4 }, () => String(randomInt(10000, 100000))).join('');
+/** A nonce's random part, which redaction replaces: four groups of five digits, with nothing between. */
+const NONCE_DIGITS = 20;
+const randomDigits = (): string => Array.from({ length: NONCE_DIGITS / 5 }, () => String(randomInt(10000, 100000))).join('');
+/** Text without this can't hold a nonce. */
+const DIGIT_RUN = new RegExp(`\\d{${NONCE_DIGITS}}`);
 
 function findBash(): string | undefined {
   for (const p of ['/bin/bash', ...(process.env.PATH ?? '').split(':').filter(Boolean).map((d) => path.join(d, 'bash'))]) {
@@ -175,6 +179,7 @@ class LiveSession implements Session {
       reply: (d) => this.p.write(d),
       pressure: (paused) => (paused ? this.p.pause() : this.p.resume()),
       redact: (s) => this.redact(s),
+      redactSpan: NONCE_DIGITS,
       mark: (payload, at) => this.mark(payload, at),
     });
     p.onData((d) => {
@@ -215,7 +220,7 @@ class LiveSession implements Session {
   }
 
   private redact(s: string): string {
-    if (!/\d{20}|[0-9a-f]{16}/.test(s)) return s;
+    if (!DIGIT_RUN.test(s)) return s;
     for (const r of this.recent) if (s.includes(r)) s = s.replaceAll(r, REDACTED.padEnd(r.length, '.'));
     return s;
   }
