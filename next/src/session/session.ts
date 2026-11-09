@@ -10,7 +10,7 @@ import * as integration from './integration.js';
 import type { Nonce } from './integration.js';
 import * as proc from './proc.js';
 import { Transcript, type Pos } from './transcript.js';
-import type { Closed, Command, Ending, Exit, Front, Lines, Match, OpenOptions, OpenSession, Process, RunOutcome, Screen, SendOutcome, Session, SessionEvent, ShellKind, StopOutcome, StopStep, Took, Until, WaitOutcome } from './types.js';
+import type { Closed, Command, Ending, Exit, Front, IntegrateOutcome, Lines, Match, OpenOptions, OpenSession, Process, RunOutcome, Screen, SendOutcome, Session, SessionEvent, ShellKind, StopOutcome, StopStep, Took, Until, WaitOutcome } from './types.js';
 
 const LINUX = process.platform === 'linux';
 const TICK_MS = 50;
@@ -21,6 +21,8 @@ const CLOSE_GRACE_MS = 2000;
 const HANGUP_EVERY_MS = 500;
 const RECENT_NONCES = 64;
 const MAX_COMMANDS = 10_000;
+/** The longest text `run` gives a shell with the integration by typing, in bytes of UTF-8. Its typed line, escaped, can be five times as long, and the line editor's time grows with it. */
+const FAR_MAX_BYTES = 64 * 1024;
 /** The kept commands' text and discarded input, at most, besides the count: the frozen transcript's bound. */
 const MAX_COMMAND_CHARS = 6 * 1024 * 1024;
 const keptChars = (c: Command): number => (c.text?.length ?? 0) + (c.end?.flushed?.length ?? 0);
@@ -121,7 +123,24 @@ interface Chain {
   runCommand: Command | undefined;
   refused: number;
   cwd: string;
+  /** A shell given the integration with `integrate`: its kind, the local program it runs under, and what its drain sent since the last end mark, as hex. */
+  far?: { kind: integration.FarKind; within: Process; drained: string[] };
 }
+
+/** What a shell answered `integrate`'s probe line with: each one's version, empty but for the shell that ran it; `$0` from a shell that named none. */
+interface ProbeAnswer {
+  fish: string;
+  zsh: string;
+  bash: string;
+  zero?: string;
+}
+
+/** The text a far shell's drain sent before an end mark, from its hex pieces, which are taken. */
+const farDrained = (far: { drained: string[] }): string => {
+  const hex = far.drained.join('');
+  far.drained = [];
+  return /^(?:[0-9a-f]{2})*$/.test(hex) ? Buffer.from(hex, 'hex').toString('utf8') : '';
+};
 
 const newChain = (expected: Nonce, cwd: string): Chain => ({
   expected,
@@ -147,6 +166,8 @@ class LiveSession implements Session {
   private readonly log: ((line: string) => void) | undefined;
   private readonly shellName: string;
   private readonly chains: Chain[];
+  /** While `integrate` waits for its probe line's answer. */
+  private probe: { answer?: ProbeAnswer } | undefined;
   private readonly recent: string[] = [];
   private readonly commands = new Map<number, Command>();
   private commandChars = 0;
@@ -253,7 +274,21 @@ class LiveSession implements Session {
 
   private mark(payload: string, at: Pos): boolean {
     const [kind, nonce, ...rest] = payload.split(';');
+    if (kind === 'K') {
+      if (this.probe && !this.probe.answer) {
+        const [fish = '', zsh = '', bash = '', zero] = rest;
+        this.probe.answer = { fish, zsh, bash, ...(zero !== undefined && { zero }) };
+        this.wake();
+      }
+      return false;
+    }
+    if (kind === 'D' && !this.exitInfo) {
+      const below = this.chains.findIndex((c, i) => i < this.chains.length - 1 && integration.nonceText(c.expected) === nonce);
+      if (below >= 0) this.drop(below);
+    }
     const expected = integration.nonceText(this.top.expected);
+    const far = this.top.far;
+    if (kind === 'F' && nonce === expected && far && !this.exitInfo) return far.drained.push(rest[0] ?? ''), false;
     if (kind === 'C' && nonce === expected && this.top.inCommand) return this.top.refused++, false;
     const ok = nonce === expected && !this.exitInfo;
     if (kind === 'C' && ok) return this.started(at, rest[0] ? unescape(rest[0]) : undefined), true;
@@ -261,7 +296,7 @@ class LiveSession implements Session {
       const [next, status, pipe, flags, cwd] = rest;
       const m = /^(\d+)\.(\w+)$/.exec(next ?? '');
       if (m && Number(m[1]) === this.top.expected.counter + 1) {
-        this.ended(at, { status: Number(status), pipe: (pipe ?? '').split(' ').filter(Boolean).map(Number), flags: flags ?? '', cwd: unescape(cwd ?? ''), flushed: this.drained(this.top.expected.counter) });
+        this.ended(at, { status: Number(status), pipe: (pipe ?? '').split(' ').filter(Boolean).map(Number), flags: flags ?? '', cwd: unescape(cwd ?? ''), flushed: far ? farDrained(far) : this.drained(this.top.expected.counter) });
         this.top.expected = { counter: Number(m[1]), random: m[2]! };
         this.remember(this.top.expected);
         return true;
@@ -280,8 +315,18 @@ class LiveSession implements Session {
       }
       return false;
     }
-    if ((kind === 'C' || kind === 'D' || kind === 'B') && /^\d+\.\d+$/.test(nonce ?? '')) this.top.refused++;
+    if ((kind === 'C' || kind === 'D' || kind === 'B' || kind === 'F') && /^\d+\.\d+$/.test(nonce ?? '')) this.top.refused++;
     return false;
+  }
+
+  /** An end mark came from the shell holding chain `i`, so every shell given the integration above it has exited. A command running in one ends with no status, as at a shell's exit. */
+  private drop(i: number): void {
+    while (this.chains.length - 1 > i) {
+      const c = this.chains.pop()!;
+      const open = c.running ?? c.runCommand;
+      if (open) this.finish(open, undefined, { at: Date.now(), errexit: false, refusedMarks: c.refused });
+    }
+    this.wake();
   }
 
   /** The text the prompt hook's drain read before the end mark closing nonce `counter`, from the file it wrote; the file is removed. */
@@ -398,6 +443,7 @@ class LiveSession implements Session {
     await this.t.settled();
     this.exitInfo = exit;
     if (this.t.disposed) return;
+    this.drop(0);
     const c = this.top.running ?? this.top.runCommand;
     this.top.running = this.top.runCommand = undefined;
     if (c) this.finish(c, undefined, { at: Date.now(), errexit: false, refusedMarks: this.top.refused });
@@ -460,6 +506,16 @@ class LiveSession implements Session {
   front(): Front {
     const exit = this.exitInfo ?? this.ptyExit;
     if (exit) return { state: 'exited', since: this.exitedAt, exit };
+    const far = this.top.far;
+    if (far) {
+      const depth = this.chains.length;
+      if (this.prompted) {
+        const pending = this.pending();
+        return { state: 'prompt', since: this.since(`prompt:${depth}`), ...(pending !== undefined && { pending }), within: far.within };
+      }
+      const id = this.top.running?.id ?? this.top.runCommand?.id;
+      return { state: 'running', since: this.since(`r:${depth}:${id ?? ''}`), process: far.within, ...(id !== undefined && { command: id }), waitVisible: false, within: far.within };
+    }
     this.lastLook = mono();
     const shell = proc.info(this.pid);
     const g = shell?.tpgid !== undefined ? { pgrp: shell.pgrp, tpgid: shell.tpgid } : undefined;
@@ -548,13 +604,14 @@ class LiveSession implements Session {
     return proc.modes(this.pts)?.canonical === false;
   }
 
+  /** The shell in front has no marks: the session's own without the integration, or a program exec'd in its place. */
   private get plain(): boolean {
-    return this.kind === 'none' || this.execed;
+    return !this.top.far && (this.kind === 'none' || this.execed);
   }
 
   /** Whether the kernel can tell a call's loop more than the marks do: a wait for input where reads show, a prompt where there are no marks. Elsewhere (macOS) reading it on every tick only costs spawns. */
   private get kernelSays(): boolean {
-    return proc.READS_VISIBLE || this.plain;
+    return !this.top.far && (proc.READS_VISIBLE || this.plain);
   }
 
   /** The prompt's text after its end mark; until output that came after the last `send` here is parsed, what that sent. */
@@ -643,11 +700,13 @@ class LiveSession implements Session {
     if (this.top.atPrompt && !this.top.submitted && !this.prompted && !stopped()) await this.until(deadline, () => (this.prompted || this.exitInfo || !this.top.atPrompt || stopped() ? true : undefined), opts.signal);
     const f = this.front();
     if (stopped() || f.state !== 'prompt' || f.pending !== undefined) return { kind: 'refused', front: f, took: [] };
+    const far = this.top.far;
+    if (far && Buffer.byteLength(text, 'utf8') > FAR_MAX_BYTES) return { kind: 'refused', front: f, took: [], maxBytes: FAR_MAX_BYTES };
     const id = this.nextId();
     const c: Command = { id, text, from: this.t.pos().line + 1, startedAt: Date.now() };
     this.store(c);
     this.startedMono.set(c, mono());
-    const cf = integration.commandFile(this.plain ? 'none' : this.kind, this.dir, id, text);
+    const cf: { files: Array<{ path: string; body: string }>; line: string } = far ? { files: [], line: integration.farCommand(far.kind, text) } : integration.commandFile(this.plain ? 'none' : this.kind, this.dir, id, text);
     if (cf.files.length) this.files.set(id, cf.files.map((f) => f.path));
     for (const f of cf.files) fs.writeFileSync(f.path, f.body, { mode: 0o600 });
     this.top.runCommand = c;
@@ -865,6 +924,10 @@ class LiveSession implements Session {
       steps.push({ sent, ...(sent !== 'C-c' && { to: target }), front: f });
       return gone(f);
     };
+    if (this.top.far) {
+      if (!signal) await step('C-c');
+      return { steps, front: f, within: true, ...(aborted() && { cancelled: true as const }) };
+    }
     if (signal) {
       if (own) return { steps, front: f, next: 'close' };
       await step(signal);
@@ -878,6 +941,42 @@ class LiveSession implements Session {
       if (aborted()) return { steps, front: f, cancelled: true };
     }
     return { steps, front: f, next: 'close' };
+  }
+
+  async integrate(opts: { waitMs: number; signal?: AbortSignal }): Promise<IntegrateOutcome> {
+    const deadline = mono() + opts.waitMs;
+    const by = (): 'exited' | 'closed' | 'cancelled' | undefined => (this.exitInfo || this.ptyExit ? 'exited' : this.closed ? 'closed' : opts.signal?.aborted ? 'cancelled' : undefined);
+    const f = this.front();
+    if (f.state === 'exited' || this.prompted || by()) return { kind: 'refused', front: f };
+    const within: Process = f.state === 'prompt' ? { pgid: this.pid, argv: proc.info(this.pid)?.argv ?? this.shellName, shell: true } : f.process;
+    const answered = async (): Promise<ProbeAnswer | undefined> => {
+      this.probe = {};
+      return (await this.until(deadline, () => this.probe?.answer ?? (by() ? null : undefined), opts.signal)) ?? undefined;
+    };
+    try {
+      this.lastWrite = mono();
+      this.p.write(integration.PROBE_LINE);
+      const answer = await answered();
+      if (!answer) return { kind: 'incomplete', step: 'probe', by: by() ?? 'timeout', front: this.front() };
+      const kind = answer.fish ? 'fish' : answer.zsh ? 'zsh' : answer.bash ? 'bash' : undefined;
+      if (!kind) {
+        this.p.write(integration.PROBE_ZERO_LINE);
+        const name = (await answered())?.zero?.replace(/^-/, '');
+        return { kind: 'unsupported', ...(name && { shell: path.basename(name) }), front: this.front() };
+      }
+      const nonce = { counter: 1, random: randomDigits() };
+      this.remember(nonce);
+      const chain = newChain(nonce, '');
+      chain.far = { kind, within, drained: [] };
+      this.chains.push(chain);
+      this.lastWrite = mono();
+      this.p.write(integration.historyOff(kind) + integration.farHooks(kind, nonce));
+      const drawn = await this.until(deadline, () => (!this.chains.includes(chain) || by() ? false : this.top === chain && this.prompted ? true : undefined), opts.signal);
+      if (drawn) return { kind: 'integrated', shell: kind, version: answer[kind], front: this.front() };
+      return { kind: 'incomplete', step: 'hooks', by: by() ?? (this.chains.includes(chain) ? 'timeout' : 'exited'), front: this.front() };
+    } finally {
+      this.probe = undefined;
+    }
   }
 
   async close(opts: { force?: boolean } = {}): Promise<Closed> {

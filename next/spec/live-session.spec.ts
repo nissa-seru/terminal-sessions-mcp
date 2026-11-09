@@ -1276,6 +1276,209 @@ for (const sh of shells) {
   });
 }
 
+let relays = 0;
+/**
+ * A command that starts `shell`, with no startup files and an environment of its own, on a terminal of its own through `script`, as
+ * ssh would: the session's terminal is then held by the relay, which waits in poll. Its prompt is `far> `. `env` adds variables.
+ */
+function relayed(shell: string, env: Record<string, string> = {}, args: string[] = []): string {
+  const name = path.basename(shell);
+  const argv =
+    name === 'fish' ? `'${shell}' --no-config -i -C 'function fish_prompt; echo -n "far> "; end'` : name === 'zsh' ? `'${shell}' -f -i` : name === 'bash' ? `'${shell}' --norc --noprofile -i` : `'${shell}' -i`;
+  const vars = Object.entries({ HOME: lastHome(), PATH: process.env.PATH ?? '/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C.UTF-8', PS1: 'far> ', ...env }).map(([k, v]) => `${k}='${v}'`);
+  const launcher = path.join(tmp, `far-${++relays}`);
+  fs.writeFileSync(launcher, `#!/bin/sh\nexec env -i ${vars.join(' ')} ${argv} ${args.join(' ')}\n`, { mode: 0o755 });
+  return process.platform === 'darwin' ? `script -q /dev/null ${launcher}` : `script -qfc ${launcher} /dev/null`;
+}
+
+/** Starts `relayed(shell, env)` in `s` and waits for its prompt. */
+async function reachFar(s: Session, shell: string, env: Record<string, string> = {}, args: string[] = []): Promise<void> {
+  const from = s.lines(0).to - 1;
+  const r = await s.run(relayed(shell, env, args), { waitMs: 200 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  const w = await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from });
+  assert.equal(w.by, 'match', 'the far prompt is drawn');
+}
+
+/** `reachFar`, then `integrate`, which must succeed. */
+async function far(s: Session, shell: string, env: Record<string, string> = {}): Promise<void> {
+  await reachFar(s, shell, env);
+  const r = await s.integrate({ waitMs: 10_000 });
+  assert.equal(r.kind, 'integrated', JSON.stringify(r));
+}
+
+for (const sh of shells) {
+  describe(`${sh.name} given the integration through a relay`, { skip: sh.path ? false : `${sh.name} is not installed` }, () => {
+    const shell = sh.path!;
+
+    test('run there has statuses, the pipeline\'s and the directory; once it exits, the session\'s own shell is in front, as before', async () => {
+      const s = await open(shell);
+      const home = s.cwd();
+      await reachFar(s, shell);
+      const r = await s.integrate({ waitMs: 10_000 });
+      assert.equal(r.kind, 'integrated', JSON.stringify(r));
+      assert.equal(r.kind === 'integrated' && r.shell, sh.name);
+      assert.equal(r.front.state, 'prompt');
+      assert.match((r.front.state === 'prompt' && r.front.within?.argv) || '', /script/);
+      const cd = await ran(s, 'cd /');
+      assert.equal(cd.end?.status, 0);
+      assert.equal(s.cwd(), '/');
+      const p = await ran(s, 'false | sh -c "exit 3"');
+      assert.equal(p.end?.status, 3);
+      assert.deepEqual(p.end?.pipeline, [1, 3]);
+      const t = await ran(s, "printf '%s|%s|%s\\n' 'a!b' '~x' 'tab\there'\necho two");
+      // The terminal draws the tab as spaces. It reached the shell as a tab, not as a key that completes.
+      assert.match(out(s, t).join('\n'), /^a!b\|~x\|tab +here\ntwo$/);
+      const e = await s.run('exit', { waitMs: 10_000 });
+      assert.equal(e.kind, 'ended', JSON.stringify(e));
+      assert.equal(e.kind === 'ended' ? e.command.end?.status : 'x', undefined);
+      await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
+      const f = s.front();
+      assert.equal(f.state, 'prompt');
+      assert.equal(f.state === 'prompt' ? f.within : 'x', undefined);
+      assert.equal(s.cwd(), home);
+      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+    });
+
+    test('nothing from the session after the probe line reaches a history file the far shell saves as it goes', async (t) => {
+      const s = await open(shell);
+      const home = lastHome();
+      const file = sh.name === 'fish' ? path.join(home, 'far-data', 'fish', 'fish_history') : path.join(home, 'far-history');
+      const env: Record<string, string> = sh.name === 'fish' ? { XDG_DATA_HOME: path.join(home, 'far-data') } : sh.name === 'bash' ? { HISTFILE: file, PROMPT_COMMAND: 'history -a' } : { HISTFILE: file };
+      await reachFar(s, shell, env, sh.name === 'zsh' ? ['-o', 'incappendhistory'] : []);
+      const typed = await s.send('echo before-integrate\r', { waitMs: 5000, until: /^before-integrate$/ });
+      assert.equal(typed.by, 'match');
+      await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 5000, from: typed.matched!.line });
+      const r = await s.integrate({ waitMs: 10_000 });
+      assert.equal(r.kind, 'integrated', JSON.stringify(r));
+      assert.deepEqual(out(s, await ran(s, 'echo after-integrate')), ['after-integrate']);
+      await s.run('exit', { waitMs: 10_000 });
+      await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
+      const saved = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      t.diagnostic(`saved: ${JSON.stringify(saved)}`);
+      assert.match(saved, /before-integrate/, 'the far shell saved what was typed before');
+      assert.doesNotMatch(saved, /after-integrate|__tsm|\d{20}/, saved);
+    });
+
+    test('a far command reads as running, never waiting; stop types only C-c there, and a signal is refused', async () => {
+      const s = await open(shell);
+      await far(s, shell);
+      const waits: SessionEvent[] = [];
+      const off = s.onEvent((e) => e.kind === 'waiting' && waits.push(e));
+      const r = await s.run('read x', { waitMs: 1500 });
+      assert.equal(r.kind, 'running');
+      const f = s.front();
+      assert.equal(f.state, 'running');
+      assert.ok(f.state === 'running' && f.within && !f.waitVisible, JSON.stringify(f));
+      const refused = await s.stop('SIGTERM');
+      assert.deepEqual([refused.within, refused.steps.length, refused.front.state], [true, 0, 'running']);
+      const st = await s.stop();
+      assert.deepEqual(st.steps.map((x) => x.sent), ['C-c']);
+      assert.equal(st.within, true);
+      assert.equal(st.front.state, 'prompt');
+      off();
+      assert.deepEqual(waits, []);
+      const c = s.command(r.kind === 'running' ? r.command.id : -1);
+      assert.notEqual(c?.end?.status, 0);
+    });
+
+    test('text sent during a far command that never reads it comes back as flushed, and doesn\'t run', async () => {
+      const s = await open(shell);
+      await far(s, shell);
+      const gate = newGate();
+      fs.writeFileSync(gate, '');
+      const r = await s.run(holdJob(gate), { waitMs: 300 });
+      assert.equal(r.kind, 'running');
+      await s.send('echo SHOULD_NOT_RUN\r', { waitMs: 1000, quietMs: 200 });
+      fs.rmSync(gate);
+      const w = await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
+      assert.equal(w.by, 'end');
+      const c = s.command(r.kind === 'running' ? r.command.id : -1)!;
+      assert.match(c.end?.flushed ?? '', /echo SHOULD_NOT_RUN/);
+      const after = await ran(s, 'echo after');
+      assert.ok(!s.lines(c.from, after.to).lines.includes('SHOULD_NOT_RUN'), JSON.stringify(s.lines(c.from, after.to).lines));
+    });
+
+    test('integrate is refused at a prompt with the integration, the session\'s own or a far one, and shows no nonce', async () => {
+      const s = await open(shell);
+      assert.equal((await s.integrate({ waitMs: 2000 })).kind, 'refused');
+      await far(s, shell);
+      assert.equal((await s.integrate({ waitMs: 2000 })).kind, 'refused');
+      assert.ok(!/\d{20}/.test(s.lines(0).lines.join('\n')), 'no nonce in the transcript');
+    });
+
+    test('a run whose text is longer than a far shell takes is refused, naming the limit', async () => {
+      const s = await open(shell);
+      await far(s, shell);
+      const r = await s.run(`echo ${'x'.repeat(64 * 1024)}`, { waitMs: 2000 });
+      assert.equal(r.kind, 'refused');
+      assert.equal(r.kind === 'refused' && r.maxBytes, 64 * 1024);
+      const ok = await ran(s, `echo ${'y'.repeat(60 * 1024)} | wc -c`, 60_000);
+      assert.equal(out(s, ok).at(-1)?.trim(), String(60 * 1024 + 1));
+    });
+
+    test('a second relay from the far shell takes the integration on top; when the first relay ends, both are gone', async () => {
+      const s = await open(shell);
+      await far(s, shell);
+      const outer = s.front();
+      assert.equal(outer.state, 'prompt');
+      await far(s, shell);
+      assert.deepEqual(out(s, await ran(s, 'echo deep')), ['deep']);
+      const hold = await s.run('sleep 300', { waitMs: 300 });
+      assert.equal(hold.kind, 'running');
+      const relay = outer.state === 'prompt' ? outer.within!.pgid : 0;
+      process.kill(-relay, 'SIGKILL');
+      await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
+      const f = s.front();
+      assert.equal(f.state, 'prompt');
+      assert.equal(f.state === 'prompt' ? f.within : 'x', undefined);
+      const c = s.command(hold.kind === 'running' ? hold.command.id : -1);
+      assert.equal(c?.end?.status, undefined);
+      assert.ok(c?.end, 'the far command ended with no status');
+      assert.deepEqual(out(s, await ran(s, 'echo home')), ['home']);
+    });
+
+    test('a wait that runs out types nothing more: a probe that answers late changes nothing, and a new call integrates', async () => {
+      const s = await open(shell);
+      await reachFar(s, shell);
+      const r = await s.integrate({ waitMs: 0 });
+      assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['probe', 'timeout']);
+      const from = s.lines(0).to - 1;
+      const w = await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from });
+      assert.equal(w.by, 'match', 'the probe line ran');
+      await s.wait({ kind: 'match', pattern: /eval/ }, { waitMs: 500, from });
+      assert.ok(!s.lines(from).lines.some((l) => l.includes('eval')), 'no hooks were typed');
+      assert.equal(s.front().state, 'running');
+      assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+    });
+
+    test('hooks whose prompt is drawn after the wait ran out still give the shell the integration', { skip: sh.name !== 'bash' ? 'the held prompt is a PROMPT_COMMAND' : false }, async () => {
+      const s = await open(shell);
+      const gate = newGate();
+      await reachFar(s, shell, { PROMPT_COMMAND: `while [ -e ${gate} ]; do sleep 0.05; done` });
+      fs.writeFileSync(gate, '');
+      const r = await s.integrate({ waitMs: 1500 });
+      assert.deepEqual(r.kind === 'incomplete' && [r.step, r.by], ['hooks', 'timeout'], JSON.stringify(r));
+      fs.rmSync(gate);
+      await eventually('the far prompt with the integration', () => {
+        const f = s.front();
+        return f.state === 'prompt' && f.within !== undefined;
+      });
+      assert.deepEqual(out(s, await ran(s, 'echo late')), ['late']);
+    });
+  });
+}
+
+test('integrate names a shell it has no hooks for, and types nothing more', { skip: which('dash') && which('bash') ? false : 'dash and bash are both needed' }, async () => {
+  const s = await open(which('bash')!);
+  await reachFar(s, which('dash')!);
+  const r = await s.integrate({ waitMs: 10_000 });
+  assert.equal(r.kind, 'unsupported', JSON.stringify(r));
+  assert.equal(r.kind === 'unsupported' && r.shell, 'dash');
+  assert.equal(s.front().state, 'running');
+  assert.equal((await s.run('echo x', { waitMs: 500 })).kind, 'refused');
+});
+
 test('the descendants of a pid with no process cannot be listed', () => {
   assert.equal(proc.descendants(2 ** 22 + 12345), undefined);
   assert.ok(Array.isArray(proc.descendants(process.pid)));
