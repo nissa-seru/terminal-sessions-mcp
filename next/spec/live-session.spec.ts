@@ -775,20 +775,21 @@ for (const sh of shells) {
       assert.match(m?.kind === 'match' ? m.match.text : '', /^35 /);
     });
 
-    test('a search that is behind lets another session\'s watch go on', same, async () => {
+    test('a search that has spent the turn\'s slice still lets another session\'s watch search a line in that turn', same, async () => {
       const a = await open(shell, { cols: 200 });
       const from = a.lines(0).to;
       await ran(a, backlog(80), 30_000);
       const b = await open(shell);
       const bFrom = b.lines(0).to;
       await ran(b, 'echo NEEDLE-$((6 * 7))');
+      const needle = bFrom + b.lines(bFrom).lines.indexOf('NEEDLE-42');
+      assert.ok(needle >= bFrom);
       const events: SessionEvent[] = [];
       b.onEvent((e) => events.push(e));
-      let waited = false;
-      const w = a.wait({ kind: 'match', pattern: costly() }, { waitMs: 300_000, from }).then((r) => ((waited = true), r));
-      const id = b.watch(/^NEEDLE-42$/, bFrom);
-      await eventually('the watch', () => events.some((e) => e.kind === 'match' && e.watch === id), 300_000);
-      assert.equal(waited, false, 'the other session\'s search had finished first');
+      const w = a.wait({ kind: 'match', pattern: costly() }, { waitMs: 300_000, from });
+      const id = b.watch(/^NEEDLE-42$/, needle);
+      for (let i = 0; i < 20; i++) await null;
+      assert.ok(events.some((e) => e.kind === 'match' && e.watch === id), 'the watch searched nothing in the turn the other search spent');
       assert.equal((await w).by, 'match');
     });
 

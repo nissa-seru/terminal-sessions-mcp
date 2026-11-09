@@ -696,7 +696,7 @@ class LiveSession implements Session {
       if (ls.lines.length === 0) break;
       const frozen = ls.lines.length - ls.live;
       for (let i = 0; i < ls.lines.length; i++) {
-        if (!now && s.turn === turn && spent()) return this.later(s, ls.from + i, 0);
+        if (!now && spent() && s.turn === turn) return this.later(s, ls.from + i, 0);
         s.turn = turn;
         const r = testBounded(pattern, ls.lines[i]!);
         if (r.matched) return { line: ls.from + i, text: ls.lines[i]!, ...(r.clipped && { clipped: true as const }) };
@@ -710,7 +710,7 @@ class LiveSession implements Session {
     const screen = this.t.screen();
     if (screen.alt)
       for (let row = s.row; row < screen.rows.length; row++) {
-        if (!now && s.turn === turn && spent()) return this.later(s, n, row);
+        if (!now && spent() && s.turn === turn) return this.later(s, n, row);
         s.turn = turn;
         const r = testBounded(pattern, screen.rows[row]!);
         if (r.matched) return { line: this.t.end(), text: screen.rows[row]!, row, ...(r.clipped && { clipped: true as const }) };
