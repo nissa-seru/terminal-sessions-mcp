@@ -26,8 +26,8 @@ let homes = 0;
 const sessions: Session[] = [];
 /** A deadline for `close`, on `performance.now()`'s clock. */
 const by = (ms = 30_000): number => performance.now() + ms;
-// Each test's sessions close as it ends. Held to the suite's end, on macOS they used up what spawning a shell needs, and the
-// last tests' shells failed to start.
+// Each test's sessions close as it ends. With every session held to the suite's end, the last tests' shells failed to start
+// on macOS.
 let openedBefore = 0;
 beforeEach(() => {
   openedBefore = sessions.length;
