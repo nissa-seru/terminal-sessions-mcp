@@ -35,7 +35,7 @@ const mono = (): number => performance.now();
 /** Pattern searches in one turn of the event loop, in every session, stop once they've spent this long, after the line or row they're on, and go on in a later turn. */
 const SLICE_MS = TICK_MS;
 /** A pattern search fetches the lines it searches this many at a time. */
-const SCAN_CHUNK = 256;
+const SCAN_CHUNK = 16;
 let sliceEnd: number | undefined;
 /** Whether this turn's pattern searches have spent their slice; the first search in a turn starts it. */
 function spent(): boolean {
