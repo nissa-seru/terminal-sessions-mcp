@@ -1284,7 +1284,7 @@ let relays = 0;
 function relayed(shell: string, env: Record<string, string> = {}, args: string[] = []): string {
   const name = path.basename(shell);
   const argv =
-    name === 'fish' ? `'${shell}' --no-config -i -C 'function fish_prompt; echo -n "far> "; end'` : name === 'zsh' ? `'${shell}' -f -i` : name === 'bash' ? `'${shell}' --norc --noprofile -i` : `'${shell}' -i`;
+    name === 'fish' ? `'${shell}' ${env.XDG_CONFIG_HOME ? '' : '--no-config '}-i -C 'function fish_prompt; echo -n "far> "; end'` : name === 'zsh' ? `'${shell}' -f -i` : name === 'bash' ? `'${shell}' --norc --noprofile -i` : `'${shell}' -i`;
   const vars = Object.entries({ HOME: lastHome(), PATH: process.env.PATH ?? '/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'C.UTF-8', PS1: 'far> ', ...env }).map(([k, v]) => `${k}='${v}'`);
   const launcher = path.join(tmp, `far-${++relays}`);
   fs.writeFileSync(launcher, `#!/bin/sh\nexec env -i ${vars.join(' ')} ${argv} ${args.join(' ')}\n`, { mode: 0o755 });
@@ -1345,7 +1345,8 @@ for (const sh of shells) {
       const s = await open(shell);
       const home = lastHome();
       const file = sh.name === 'fish' ? path.join(home, 'far-data', 'fish', 'fish_history') : path.join(home, 'far-history');
-      const env: Record<string, string> = sh.name === 'fish' ? { XDG_DATA_HOME: path.join(home, 'far-data') } : sh.name === 'bash' ? { HISTFILE: file, PROMPT_COMMAND: 'history -a' } : { HISTFILE: file, SAVEHIST: '1000', HISTSIZE: '1000' };
+      // This fish starts with an empty configuration directory, rather than --no-config, as a user's starts with theirs.
+      const env: Record<string, string> = sh.name === 'fish' ? { XDG_DATA_HOME: path.join(home, 'far-data'), XDG_CONFIG_HOME: path.join(home, 'far-config') } : sh.name === 'bash' ? { HISTFILE: file, PROMPT_COMMAND: 'history -a' } : { HISTFILE: file, SAVEHIST: '1000', HISTSIZE: '1000' };
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, '');
       await reachFar(s, shell, env, sh.name === 'zsh' ? ['-o', 'incappendhistory'] : []);
