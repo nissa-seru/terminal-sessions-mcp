@@ -97,7 +97,8 @@ if LINUX:
     report['list_ms'] = round((time.time() - t) * 1000, 1)
     report['proc_count'] = sum(1 for d in os.listdir('/proc') if d.isdigit())
 else:
-    out = report['ps -t ' + shell_tty]['out']
+    forms = [v for k, v in report.items() if k.startswith('ps -t') and v['rc'] == 0 and v['out']]
+    out = forms[0]['out'] if forms else []
     listed = {int(l.split()[0]): int(l.split()[1]) for l in out if l.strip() and int(l.split()[0]) != pid}
 report['listed'] = listed
 
