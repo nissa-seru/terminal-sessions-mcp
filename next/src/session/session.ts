@@ -343,7 +343,19 @@ class LiveSession implements Session {
     return false;
   }
 
-  /** An end mark came from the shell holding chain `i`, so every shell given the integration above it has exited. A command running in one ends with no status, as at a shell's exit. */
+  /**
+   * A shell given the integration through a program, such as ssh, is there only while that program holds the terminal. Once the
+   * session's own shell holds it again, each such shell has left, and its chain is dropped. Nothing is dropped when the terminal's
+   * foreground group can't be read.
+   */
+  private leftFar(shell: ReturnType<typeof proc.info>): void {
+    this.lastLook = mono();
+    if (shell?.tpgid === undefined || shell.tpgid !== shell.pgrp) return;
+    const i = this.chains.findIndex((c) => c.far !== undefined && c.far.within.pgid !== shell.pgrp);
+    if (i > 0) this.drop(i - 1);
+  }
+
+  /** The shell holding chain `i` gave an end mark, or holds the terminal again, so every shell given the integration above it has exited. A command running in one ends with no status, as at a shell's exit. */
   private drop(i: number): void {
     while (this.chains.length - 1 > i) {
       const c = this.chains.pop()!;
@@ -539,6 +551,7 @@ class LiveSession implements Session {
     const exit = this.exitInfo ?? this.ptyExit;
     if (exit) return { state: 'exited', since: this.exitedAt, exit };
     const shell = proc.info(this.pid);
+    if (this.top.far) this.leftFar(shell);
     const command = this.top.running?.id ?? this.top.runCommand?.id;
     const at = <T extends object>(o: T): T => (command !== undefined ? { ...o, command } : o);
     const far = this.top.far;
@@ -758,6 +771,7 @@ class LiveSession implements Session {
     try {
       await this.until(deadline, () => {
         if (this.exitInfo || this.closed || opts.signal?.aborted) return true;
+        if (this.top.far && this.lookDue()) this.leftFar(proc.info(this.pid));
         if (c.end) return this.prompted || (this.plain && this.lookDue() && this.front().state === 'prompt') ? true : undefined;
         if (!this.kernelSays || !this.lookDue() || (this.kind !== 'none' && mono() - Math.max(this.lastOutput, this.lastWrite) < HOOKS_QUIET_MS)) return undefined;
         return this.front().state === 'waiting' || c.end ? true : undefined;
@@ -837,6 +851,7 @@ class LiveSession implements Session {
         if (opts.signal?.aborted) return 'cancelled' as const;
         if (until.kind === 'match') return (matched = this.scan(until.pattern, scan)) ? ('match' as const) : undefined;
         if (this.prompted) return until.kind === 'end' ? ('end' as const) : undefined;
+        if (this.top.far && this.lookDue()) this.leftFar(proc.info(this.pid));
         if (!this.kernelSays || !this.lookDue()) return undefined;
         const s = this.front().state;
         if (s === 'waiting') return 'input' as const;
