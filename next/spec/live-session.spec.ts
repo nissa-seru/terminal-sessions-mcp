@@ -74,6 +74,18 @@ const gone = (pid: number): boolean => {
     return true;
   }
 };
+/** The pid a command printed on a line of its own as `TAG:pid`. */
+const pidOf = (s: Session, c: Command, tag: string): number => {
+  const pid = Number(new RegExp(`^${tag}:(\\d+)$`).exec(out(s, c).find((l) => l.startsWith(`${tag}:`)) ?? '')?.[1]);
+  assert.ok(pid > 0, `${tag} in ${JSON.stringify(out(s, c))}`);
+  return pid;
+};
+/** KILLs `pid` if it's still there, to clean up after a test. */
+const killPid = (pid: number): void => {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {}
+};
 /** The home directory of the session `open` opened last. */
 const lastHome = (): string => path.join(tmp, `home-${homes}`);
 /** The exit the session saw, as its front gives it. */
@@ -923,6 +935,62 @@ for (const sh of shells) {
       }
     });
 
+    test('close hangs up a disowned job, which the shell no longer counts as its own', async () => {
+      const s = await open(shell);
+      const c = await ran(s, sh.name === 'fish' ? 'sleep 300 & echo "JOB:$last_pid"; disown' : 'sleep 300 & echo "JOB:$!"; disown');
+      const job = pidOf(s, c, 'JOB');
+      try {
+        const exit = await s.close();
+        assert.equal(exit.unlisted, undefined);
+        await eventually('the disowned job is gone', () => gone(job));
+      } finally {
+        killPid(job);
+      }
+    });
+
+    test('close hangs up a job whose parent exited, which no shell counts as its own', { skip: sh.name !== 'bash' ? 'close lists the same way in every shell' : false }, async () => {
+      const s = await open(shell);
+      const job = pidOf(s, await ran(s, `sh -c 'sleep 300 & echo "JOB:$!"'`), 'JOB');
+      try {
+        await s.close();
+        await eventually('the job whose parent exited is gone', () => gone(job));
+      } finally {
+        killPid(job);
+      }
+    });
+
+    test('close with force ends a job whose parent exited, which is no longer a descendant', { skip: sh.name !== 'bash' ? 'close lists the same way in every shell' : false }, async () => {
+      const s = await open(shell);
+      const job = pidOf(s, await ran(s, `sh -c 'sleep 300 & echo "JOB:$!"'`), 'JOB');
+      try {
+        await s.close({ force: true });
+        await eventually('the job whose parent exited is gone', () => gone(job));
+      } finally {
+        killPid(job);
+      }
+    });
+
+    test('close hangs up a stopped, disowned job, and spares a process that left the terminal with setsid and a job started with nohup', { skip: sh.name === 'fish' ? 'the fixture is bash and zsh syntax' : false }, async () => {
+      const s = await open(shell);
+      const file = path.join(tmp, `pid-${++gates}`);
+      await ran(s, `sh -c 'python3 -c "import os, sys, time; os.setsid(); open(sys.argv[1], \\"w\\").write(str(os.getpid())); time.sleep(300)" "$0"; :' '${file}' & ${holdJob(file).replace('[ -e', '[ ! -s')}`);
+      const left = Number(fs.readFileSync(file, 'utf8'));
+      const nohup = pidOf(s, await ran(s, 'nohup sleep 300 >/dev/null 2>&1 & echo "JOB:$!"'), 'JOB');
+      const stopped = pidOf(s, await ran(s, 'sleep 300 & p=$!; kill -STOP $p; echo "JOB:$p"; disown'), 'JOB');
+      const disowned = pidOf(s, await ran(s, 'sleep 300 & echo "JOB:$!"; disown'), 'JOB');
+      try {
+        const exit = await s.close();
+        assert.equal(exit.unreached, undefined);
+        // The disowned jobs were hung up in the step that hangs up the nohup job, so once they're gone it has had its hangup.
+        await eventually('the disowned job is gone', () => gone(disowned));
+        await eventually('the stopped, disowned job is gone', () => gone(stopped));
+        assert.equal(gone(nohup), false, 'the nohup job lives on');
+        assert.equal(gone(left), false, 'the process that left the terminal lives on');
+      } finally {
+        for (const pid of [left, nohup, stopped, disowned]) killPid(pid);
+      }
+    });
+
     test('close hangs up again while the shell is there, so a shell that outlived the first hangup ends on a later one, not on the KILL', { skip: sh.name === 'fish' ? 'the trap is written with bash and zsh syntax' : false }, async () => {
       // The trap takes the first hangup, leaves a file to say so, and restores the default. Without ignoreeof, bash at its prompt exits on the trapped hangup with status 0, as at end of file.
       const s = await open(shell, { rc: "set -o ignoreeof\ntrap ': > \"$HOME/first-hangup\"; trap - HUP' HUP\n" });
@@ -933,10 +1001,11 @@ for (const sh of shells) {
       assert.notEqual(exit.signal, 'SIGKILL', 'the shell ended on a later hangup, not on the KILL that follows a grace');
     });
 
-    test('close of a shell that ignores the hangup KILLs the shell alone, so a job that ignores it too lives on, writing to the closed terminal', { skip: sh.name === 'fish' ? 'the hangup is ignored with bash and zsh syntax' : false }, async () => {
+    test('close of a shell that ignores the hangup KILLs the shell and hangs up its jobs, so a job that ignores the hangup too lives on, writing to the closed terminal', { skip: sh.name === 'fish' ? 'the hangup is ignored with bash and zsh syntax' : false }, async () => {
       const s = await open(shell, { rc: "trap '' HUP\n" });
       const ticks = path.join(lastHome(), 'ticks');
-      const c = await ran(s, `(while :; do echo tick; echo tick >> '${ticks}'; sleep 0.1; done) & echo "JOB:$!"`);
+      // The job ignores the hangup in sh, which passes the ignore on to the sleep it runs. A zsh subshell keeps the shell's ignored HUP, but the commands it runs don't.
+      const c = await ran(s, `sh -c 'trap "" HUP; while :; do echo tick; echo tick >> "$0"; sleep 0.1; done' '${ticks}' & echo "JOB:$!"`);
       const job = Number(/^JOB:(\d+)$/.exec(out(s, c).find((l) => l.startsWith('JOB:')) ?? '')?.[1]);
       assert.ok(job > 0);
       try {
@@ -1136,7 +1205,7 @@ for (const sh of shells) {
         const pgid = Number(execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).trim());
         if (pgid !== pid) return t.skip('this sudo runs its command in its own group');
         const exit = await s.close({ force: true });
-        assert.ok(exit.unkilled?.some((u) => u.pgid === pgid && u.error === 'EPERM'), JSON.stringify(exit));
+        assert.ok(exit.unreached?.some((u) => u.pgid === pgid && u.signal === 'SIGKILL' && u.error === 'EPERM'), JSON.stringify(exit));
       } finally {
         try {
           execFileSync('sudo', ['-n', 'kill', '-9', String(pid)], { stdio: 'ignore' });
