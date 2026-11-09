@@ -4,7 +4,7 @@ import { validate, ValidationError } from '../api/validate.js';
 import { clause, TermError } from '../core/errors.js';
 import { inputBytes } from '../core/keys.js';
 import { compileUserRegex, headOnlyText, testBounded } from '../core/regex.js';
-import type { Command, Front, Lines, Match, OpenSession, Session, SessionEvent, Took } from '../session/types.js';
+import type { Command, Front, Lines, Match, OpenSession, SendOutcome, Session, SessionEvent, Took } from '../session/types.js';
 import { boundedStrings, dirText, duration, endingText, exitText, fitted, fittedLength, frontText, linesText, outputValue, quoted, quotedString, RESULT_MAX_CHARS, SCREEN_ROOM_CHARS, screenChars, screenText, statusLine } from './render.js';
 import { SESSION_NAME_RE, TOOLS, WAIT_DEFAULT_S, WAIT_MAX_S, type ToolDef } from './table.js';
 
@@ -358,7 +358,7 @@ export class Host {
     const r = await e.session.send(both ? text : text + keys, { waitMs: this.waitMs(a), ...(both ? { then: keys } : {}), take: caller.takes, ...(until ? { until } : {}), ...(signal ? { signal } : {}) });
     held.took = r.took;
     if (signal?.aborted) return this.cancelled(held);
-    if (e.closing || r.by === 'closed') return this.closed(e, held, [!r.sent ? 'Nothing was typed.' : r.thenSent === false ? 'Its text was typed, and its keys weren\'t.' : 'Its input was typed.', ...r.ended.map(endedLine)].join(' '), r.ended);
+    if (e.closing || r.by === 'closed') return this.closed(e, held, [!r.sent ? 'Nothing was typed.' : r.thenUnsent ? 'Its text was typed, and its keys weren\'t.' : 'Its input was typed.', ...r.ended.map(endedLine)].join(' '), r.ended);
     if (!r.sent && r.by === 'timeout' && r.front.state !== 'exited') {
       return refused(
         `${this.status(e, r.front)}\nNothing was typed: the shell hasn't finished drawing its prompt after ${duration(this.now() - r.front.since)}, and keys sent before a line editor has the terminal would reach the terminal's own line editing instead. ${this.waitMs(a) >= WAIT_MAX_S * 1000 ? '`look` shows what is in front.' : '`send` again with a longer `wait`.'}`,
@@ -369,12 +369,12 @@ export class Host {
     if (caller.takes && !r.screen && r.lines.from <= e.cursor) e.cursor = Math.max(e.cursor, r.lines.to - r.lines.live);
     const parts = [this.status(e, r.front)];
     for (const c of r.ended) parts.push(endedLine(c));
-    if (r.thenSent === false) parts.push(r.by === 'exited' ? "The keys weren't sent: the shell exited after the text." : "The keys weren't sent: output didn't stay quiet for 300 ms after the text within the wait. `send` them alone once it does.");
+    if (r.thenUnsent) parts.push(KEYS_UNSENT[r.thenUnsent]);
     else if (r.by === 'timeout') parts.push(until ? searchEndedText('send', r, false, this.unsearched(e, r)) : 'Output was still changing when the wait ended.');
     if (r.matched) parts.push(matchedText(r.matched));
     const used = parts.join('\n').length + 1;
     parts.push(r.screen ? screenText(r.screen, RESULT_MAX_CHARS - used) : this.output(r.lines, RESULT_MAX_CHARS - used));
-    return ok(parts.join('\n'), { front: r.front, by: r.by, ...(r.thenSent === false ? { keysSent: false } : {}), ended: r.ended, ...(r.matched ? { matched: r.matched } : {}), lines: { from: r.lines.from, to: r.lines.to } });
+    return ok(parts.join('\n'), { front: r.front, by: r.by, ...(r.thenUnsent ? { keysSent: false } : {}), ended: r.ended, ...(r.matched ? { matched: r.matched } : {}), lines: { from: r.lines.from, to: r.lines.to } });
   }
 
   private async look(caller: Caller, e: Entry, a: Record<string, unknown>, signal: AbortSignal | undefined, held: Held): Promise<ToolResult> {
@@ -750,6 +750,14 @@ const turn = (): Promise<void> => new Promise((r) => setImmediate(r));
 const matchedText = (m: Match): string => `Matched ${m.row === undefined ? `at line ${m.line}` : `on the screen, row ${m.row + 1}`}: ${quoted(m.text)}${m.clipped ? ` (${headOnlyText()})` : ''}`;
 
 const CANCELLED: ToolResult = { text: 'The call was cancelled.', structured: { error: 'cancelled' }, isError: true };
+
+const KEYS_UNSENT: Record<NonNullable<SendOutcome['thenUnsent']>, string> = {
+  timeout: "The keys weren't sent: output didn't stay quiet for 300 ms after the text within the wait. `send` them alone once it does.",
+  prompt: "The keys weren't sent: a command ended and its prompt came back after the text.",
+  exited: "The keys weren't sent: the shell exited after the text.",
+  closed: "The keys weren't sent: the session began closing after the text.",
+  cancelled: "The keys weren't sent: the call was cancelled after the text.",
+};
 
 const UNKNOWN_AFTER_FAILURE: Record<string, string> = {
   open: 'Whether the session opened is unknown; `list` shows the sessions open.',

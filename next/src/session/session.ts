@@ -788,35 +788,43 @@ class LiveSession implements Session {
       return at;
     };
     const call = this.enter(opts.take ?? true, opts.signal);
+    const top = this.top;
+    const counter = top.expected.counter;
     let sentAt = type(bytes);
-    let thenSent: boolean | undefined;
+    let thenUnsent: SendOutcome['thenUnsent'];
     const scan = newScan(from);
     let matched: Match | undefined;
     let by: SendOutcome['by'] = 'timeout';
     try {
       if (opts.then !== undefined) {
-        const r = await this.until(deadline, () => stopped() ?? (mono() - Math.max(this.lastOutput, sentAt) >= quiet ? ('quiet' as const) : undefined), opts.signal);
-        thenSent = r === 'quiet';
-        if (thenSent) sentAt = type(opts.then);
-        else if (r) by = r;
+        const r = await this.until(deadline, () => {
+          const s = stopped();
+          if (s) return s;
+          if (this.top !== top || this.top.expected.counter !== counter) return 'prompt' as const;
+          return mono() - Math.max(this.lastOutput, sentAt) >= quiet ? ('quiet' as const) : undefined;
+        }, opts.signal);
+        if (r === 'quiet') sentAt = type(opts.then);
+        else thenUnsent = r ?? 'timeout';
+        if (r && r !== 'quiet' && r !== 'prompt') by = r;
       }
-      const r = thenSent === false ? undefined : await this.until(deadline, () => {
+      const until = thenUnsent ? undefined : opts.until;
+      const r = thenUnsent && thenUnsent !== 'prompt' ? undefined : await this.until(deadline, () => {
         if (this.closed) return 'closed' as const;
         if (this.exitInfo) return 'exited' as const;
         if (opts.signal?.aborted) return 'cancelled' as const;
-        if (opts.until) return (matched = this.scan(opts.until, scan)) ? ('match' as const) : undefined;
+        if (until) return (matched = this.scan(until, scan)) ? ('match' as const) : undefined;
         return mono() - Math.max(this.lastOutput, sentAt) >= quiet ? ('quiet' as const) : undefined;
       }, opts.signal);
       if (r) by = r;
       await this.t.settled();
-      if (by === 'timeout' && thenSent !== false && opts.until && (matched = this.searchSettled(opts.until, scan))) by = 'match';
+      if (by === 'timeout' && until && (matched = this.searchSettled(until, scan))) by = 'match';
     } finally {
       this.calls.delete(call);
     }
     const front = this.front();
     this.observe(front, call.take ? [call] : []);
     const screen = this.t.screen();
-    return { sent: true, ...(thenSent !== undefined && { thenSent }), lines: this.t.lines(from), ...(screen.alt && { screen }), front, ended: call.ended, ...(matched && { matched }), by, ...(opts.until && !matched && this.searched(scan)), took: call.took };
+    return { sent: true, ...(thenUnsent && { thenUnsent }), lines: this.t.lines(from), ...(screen.alt && { screen }), front, ended: call.ended, ...(matched && { matched }), by, ...(until && !matched && this.searched(scan)), took: call.took };
   }
 
   async wait(until: Until, opts: { waitMs: number; from: number; take?: boolean; signal?: AbortSignal }): Promise<WaitOutcome> {

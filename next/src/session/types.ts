@@ -186,8 +186,8 @@ export type RunOutcome =
 export interface SendOutcome {
   /** false when nothing was sent: the shell had exited (`by: 'exited'`), a prompt whose end mark came wasn't drawn within the wait (`by: 'timeout'`), the call's signal aborted it (`by: 'cancelled'`), or `close` began while it waited (`by: 'closed'`). */
   sent: boolean;
-  /** With `then`: whether its bytes were sent. */
-  thenSent?: boolean;
+  /** With `then`, why its bytes weren't sent: the wait ran out before output was quiet, a prompt came back after `bytes`, or the call stopped. */
+  thenUnsent?: 'timeout' | 'prompt' | 'exited' | 'closed' | 'cancelled';
   /** From the line the cursor was on when the text went in. */
   lines: Lines;
   /** While the alternate screen is active. */
@@ -313,7 +313,7 @@ export interface Session {
 
   /** Only at a prompt with nothing pending; otherwise refused with nothing typed. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the mark at the prompt's end, as `send` does. In `run`, `send` and `wait`, an aborted `signal` ends the call's wait at once: `run` is refused if nothing was typed yet, and `send` and `wait` return `by: 'cancelled'`. */
   run(text: string, opts: { waitMs: number; take?: boolean; signal?: AbortSignal }): Promise<RunOutcome>;
-  /** Exactly these bytes, nothing appended. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the mark at the prompt's end, so the line editor gets the bytes rather than the terminal or a prompt hook, and sends nothing if the wait runs out. With `then`, those bytes follow, written apart, once output has been quiet for `quietMs` after `bytes`; if the wait runs out or the call stops first, they aren't sent. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
+  /** Exactly these bytes, nothing appended. At a prompt whose end mark came but which isn't drawn yet, it first waits, within `waitMs`, for the mark at the prompt's end, so the line editor gets the bytes rather than the terminal or a prompt hook, and sends nothing if the wait runs out. With `then`, those bytes follow, written apart, once output has been quiet for `quietMs` after `bytes`; if the wait runs out, a prompt comes back, or the call stops first, they aren't sent. Returns when `until` matches from the cursor's line on, or (without `until`) when output is quiet for `quietMs`, default 300. */
   send(bytes: string, opts: { waitMs: number; then?: string; until?: RegExp; quietMs?: number; take?: boolean; signal?: AbortSignal }): Promise<SendOutcome>;
   /** `match` looks from line `from` on, so lines already there count. */
   wait(until: Until, opts: { waitMs: number; from: number; take?: boolean; signal?: AbortSignal }): Promise<WaitOutcome>;

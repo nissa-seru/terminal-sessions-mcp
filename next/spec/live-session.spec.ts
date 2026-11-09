@@ -359,6 +359,22 @@ for (const sh of shells) {
       assert.ok(!s.lines(0).lines.includes('TYPEAHEAD_RAN'));
     });
 
+    test('keys to follow text are withheld when a prompt comes back before output is quiet, so a C-d meant for the job never reaches the shell', async () => {
+      const s = await open(shell);
+      const gate = newGate();
+      fs.writeFileSync(gate, '');
+      const r = await s.run(holdJob(gate), { waitMs: 200 });
+      assert.equal(r.kind, 'running');
+      await inFront(s, /while \[ -e/);
+      const sending = s.send('abc', { waitMs: 15_000, quietMs: 5000, then: '\x04' });
+      fs.rmSync(gate);
+      const sent = await sending;
+      assert.equal((sent as { thenUnsent?: string }).thenUnsent, 'prompt', `front: ${s.front().state}, by: ${sent.by}`);
+      assert.notEqual(s.front().state, 'exited');
+      const after = await ran(s, 'echo alive');
+      assert.deepEqual(out(s, after), ['alive']);
+    });
+
     test('a partial line typed ahead is discarded and reported too, leaving nothing at the prompt', async () => {
       const s = await open(shell);
       const gate = newGate();

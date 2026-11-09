@@ -81,7 +81,7 @@ export const TOOLS: readonly ToolDef[] = [
     description:
       'Type into the terminal exactly the given `text`, then the named `keys`; nothing is appended, so a line needs `keys: ["Enter"]`. ' +
       'With both, the keys go once output has been quiet for 300 ms after the text, so a program that takes a fast, long read as a paste reads them apart; ' +
-      'if output doesn\'t go quiet within the wait, the keys aren\'t sent, and the result says so. ' +
+      'if output doesn\'t go quiet within the wait, or a command ends and its prompt comes back first, the keys aren\'t sent, and the result says so. ' +
       'For answering a program that waits for input, or driving a full-screen one. Returns what changed: the new lines, or the screen of a full-screen program, ' +
       'once `wait_for` matches, or, without `wait_for`, once output has been quiet for 300 ms. Keys: Enter, Tab, S-Tab, Esc, Space, Backspace, Delete, Insert, Up, Down, Left, Right, Home, End, ' +
       'PageUp, PageDown, F1 to F12, C-a to C-z and C-\\, C-], C-@, C-^, C-_ (Ctrl), M-<char> (Alt), and C-, M- and S- on the arrows, Home, End, Insert, Delete, PageUp, PageDown and F-keys.',
