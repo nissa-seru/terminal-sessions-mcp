@@ -1229,6 +1229,10 @@ class LiveSession implements Session {
       await this.until(Math.min(mono() + CLOSE_GRACE_MS, deadline), gone);
       // A shell hangs up only the jobs it still counts as its own, and a KILLed one none.
       if (!opts.force) await reach('SIGHUP', before(0));
+    } else {
+      // Once the shell has exited, nothing has its terminal, so what it left running can't be listed, and may live on.
+      unlisted = true;
+      this.log?.(`session ${JSON.stringify(this.name)}: close couldn't list what the shell left running, since the shell had already exited`);
     }
     const exit = this.exitInfo ?? this.ptyExit;
     this.t.dispose();
