@@ -50,6 +50,9 @@ export class FakeSession implements Session {
   keyOptions(): { appCursor: boolean } {
     return { appCursor: false };
   }
+  async bracketedPaste(): Promise<boolean> {
+    return false;
+  }
 
   print(...lines: string[]): void {
     this.out.push(...lines);

@@ -351,6 +351,15 @@ export class Host {
       throw err;
     }
     if (bytes === '') return refused('Nothing to send: give `text`, `keys`, or both.', { error: 'invalid_argument' });
+    if (a.paste === true) {
+      const text = (a.text as string | undefined) ?? '';
+      if (text === '') return refused('Nothing was typed: `paste` sends `text` as a paste, so it needs `text`.', { error: 'invalid_argument' });
+      if (text.includes(PASTE_END)) return refused('Nothing was typed: `text` holds the bracketed-paste end marker, ESC [ 2 0 1 ~, which would end the paste early.', { error: 'invalid_argument' });
+      if (!(await e.session.bracketedPaste())) {
+        return refused(`${this.status(e, e.session.front())}\nNothing was typed: the program in front hasn't turned bracketed paste on, so it can't tell a paste from typing. \`send\` without \`paste\` types the text.`, { error: 'invalid_argument', front: e.session.front() });
+      }
+      bytes = PASTE_START + bytes.slice(0, text.length) + PASTE_END + bytes.slice(text.length);
+    }
     const until = a.wait_for !== undefined ? this.regex(a.wait_for as string, 'wait_for', 'nothing was typed') : undefined;
     const r = await e.session.send(bytes, { waitMs: this.waitMs(a), take: caller.takes, ...(until ? { until } : {}), ...(signal ? { signal } : {}) });
     held.took = r.took;
@@ -746,6 +755,9 @@ const turn = (): Promise<void> => new Promise((r) => setImmediate(r));
 const matchedText = (m: Match): string => `Matched ${m.row === undefined ? `at line ${m.line}` : `on the screen, row ${m.row + 1}`}: ${quoted(m.text)}${m.clipped ? ` (${headOnlyText()})` : ''}`;
 
 const CANCELLED: ToolResult = { text: 'The call was cancelled.', structured: { error: 'cancelled' }, isError: true };
+
+const PASTE_START = '\x1b[200~';
+const PASTE_END = '\x1b[201~';
 
 const UNKNOWN_AFTER_FAILURE: Record<string, string> = {
   open: 'Whether the session opened is unknown; `list` shows the sessions open.',
