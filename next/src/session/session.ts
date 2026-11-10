@@ -1165,7 +1165,7 @@ class LiveSession implements Session {
     // captured processes guard the handshake too.
     let gone: Leaf | undefined;
     const leafGone = (): boolean => (gone ??= leaves.find((l) => !proc.alive(l.pid))) !== undefined;
-    const ended = (): boolean => !this.chains.includes(below) || below.atPrompt || (plainBelow && this.lookDue() && this.front().state === 'prompt') || leafGone();
+    const ended = (): boolean => !this.chains.includes(below) || below.atPrompt || (plainBelow && this.lookDue() && this.front().state === 'prompt');
     let stopped: 'exited' | 'closed' | 'cancelled' | undefined;
     const stop = (): typeof stopped => (stopped ??= by() ?? (ended() ? 'exited' : undefined));
     const incomplete = (step: 'probe' | 'hooks', why: NonNullable<typeof stopped> | 'timeout'): IntegrateOutcome => ({
