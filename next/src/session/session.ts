@@ -127,8 +127,8 @@ interface Chain {
   inCommand: boolean;
   submitted: boolean;
   sentPending: string | undefined;
-  /** The prompt's line and the cursor as they were when `send` last wrote at `at`. */
-  sentView: { at: Pos; line: string; cursor: Pos } | undefined;
+  /** The prompt's line and the cursor as they were when `send` last wrote at `at`, and whether a parse since has changed either. */
+  sentView: { at: Pos; line: string; cursor: Pos; changed: boolean } | undefined;
   promptAt: Pos | undefined;
   /** At a shell without integration: `lastWrite` when `promptAt` was taken, so a prompt drawn later with nothing typed since moves it. */
   promptAtWrite: number;
@@ -267,6 +267,7 @@ class LiveSession implements Session {
       this.outputs++;
       this.t.write(d, () => {
         this.parses++;
+        this.sentSeen();
         this.checkWatches();
         this.wake();
       });
@@ -783,8 +784,8 @@ class LiveSession implements Session {
    * blank. Otherwise it's the whole line from the end mark, past the cursor too, unless that's the line as drawn at rest. Text past
    * the cursor counts only then, since a line editor can draw its own there, as fish draws its suggestion. The rest is taken while
    * nothing has been sent at this prompt and the cursor sits at the end mark, so text a line editor draws there with the cursor
-   * after it isn't taken in. With no rest taken, any text counts. Until the prompt's line or the cursor changes after the last `send`
-   * here, what was sent: output from elsewhere, or a far echo still on its way, says nothing of the line.
+   * after it isn't taken in. With no rest taken, any text counts. Until a parse changes the prompt's line or the cursor after the last
+   * `send` here, what was sent: output from elsewhere, or a far echo still on its way, says nothing of the line.
    */
   private pending(): string | undefined {
     const b = this.top.promptAt;
@@ -803,7 +804,15 @@ class LiveSession implements Session {
     const sent = this.top.sentPending;
     if (sent === undefined || !/[^\x00-\x20\x7f]/.test(sent)) return undefined;
     const v = this.top.sentView;
-    return !this.t.caughtUp || (v?.at === b && v.line === text && v.cursor.line === cur.line && v.cursor.col === cur.col) ? sent : undefined;
+    return !this.t.caughtUp || (v?.at === b && !v.changed) ? sent : undefined;
+  }
+
+  /** Marks the view `send` took as changed once a parse leaves the prompt's line or the cursor other than they were. */
+  private sentSeen(): void {
+    const v = this.top.sentView;
+    if (!v || v.changed) return;
+    const cur = this.t.pos();
+    v.changed = cur.line !== v.cursor.line || cur.col !== v.cursor.col || this.promptLine(v.at) !== v.line;
   }
 
   /**
@@ -996,7 +1005,7 @@ class LiveSession implements Session {
       const b = this.top.promptAt;
       if (b) {
         this.top.sentAt = b;
-        this.top.sentView = { at: b, line: this.promptLine(b), cursor: this.t.pos() };
+        this.top.sentView = { at: b, line: this.promptLine(b), cursor: this.t.pos(), changed: false };
       }
       try {
         sentAt = this.write(bytes);
