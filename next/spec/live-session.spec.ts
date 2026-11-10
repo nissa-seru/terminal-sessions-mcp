@@ -2085,7 +2085,7 @@ test('a synchronous ps that ignores TERM is killed at its timeout, so front retu
     const f = s.front();
     process.env.PATH = keep;
     assert.equal(fs.existsSync(started), true, 'front ran the ps that ignores TERM');
-    assert.equal(f.state, 'prompt');
+    assert.equal(f.state, 'unknown');
     assert.equal(fs.existsSync(finished), false, 'front returned before the ps that ignores TERM ran to its end');
   } finally {
     process.env.PATH = keep;
@@ -2571,24 +2571,6 @@ test("the session's own shell with the integration, replaced by a program a key 
   assert.doesNotMatch(fs.readFileSync(capture, 'utf8'), /MUST_NOT_REACH_CAT|__tsm/);
 });
 
-test("the session's own shell with the integration reads as unknown at its prompt while its command line can't be read, and run types nothing", darwinOnly, async () => {
-  const s = await open(which('bash') ?? '/bin/bash');
-  const flag = path.join(tmp, `fails-${++gates}`);
-  const fake = fakePs(`*command=*) [ -e '${flag}' ] && { echo 'ps: reading failed' >&2; exit 1; };;`);
-  const keep = process.env.PATH;
-  try {
-    process.env.PATH = `${fake}:${keep}`;
-    assert.equal(s.front().state, 'prompt');
-    fs.writeFileSync(flag, '');
-    const f = s.front();
-    assert.equal(f.state, 'unknown', JSON.stringify(f));
-    assert.equal((await s.run('echo x', { waitMs: 300 })).kind, 'refused');
-  } finally {
-    process.env.PATH = keep;
-    fs.rmSync(flag, { force: true });
-  }
-});
-
 test("the session's own shell, given the integration in place, reads as unknown while its command line can't be read, and run types nothing", darwinOnly, async () => {
   const s = await open('/bin/sh');
   await s.run(`exec ${which('bash') ?? '/bin/bash'} --norc --noprofile`, { waitMs: 5000 });
@@ -3066,11 +3048,12 @@ test("with the terminal's foreground group unread, a program in front of a shell
   await s.close({ force: true, deadline: by() });
 });
 
-test("with the terminal's foreground group unread, a shell with marks running a command is unknown, and one at its prompt is still at it", { skip: process.platform !== 'darwin' ? "here the shell's group is read from /proc, not from ps" : false }, async () => {
+test("with the terminal's foreground group unread, a shell with marks is unknown, running a command and at its prompt too, and run types nothing", { skip: process.platform !== 'darwin' ? "here the shell's group is read from /proc, not from ps" : false }, async () => {
   const s = await open(which('bash') ?? '/bin/bash');
   await failing('ps', '/bin/ps', async (ps) => {
     ps.on();
-    assert.equal(s.front().state, 'prompt');
+    assert.equal(s.front().state, 'unknown');
+    assert.equal((await s.run('echo SHOULD_NOT_RUN', { waitMs: 300 })).kind, 'refused');
     ps.off();
     const r = await s.run('sleep 30', { waitMs: 300 });
     assert.equal(r.kind, 'running', JSON.stringify(r));
