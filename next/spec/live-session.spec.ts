@@ -1,6 +1,6 @@
 import { after, afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -153,13 +153,13 @@ const fakePs = (cases: string): string => {
 const newGate = (): string => path.join(tmp, `gate-${++gates}`);
 /** A job of one process group that runs until `gate` is removed. */
 const holdJob = (gate: string): string => `sh -c 'while [ -e "$0" ]; do sleep 0.05; done' '${gate}'`;
-/** A prompt hook that, while `gate` exists, prints HELD and holds the prompt; it runs after the end mark. fish draws what its prompt function prints only once it returns, so there HELD goes to the terminal itself. */
-const gateHook = (shell: string, gate: string): string =>
+/** A prompt hook that, while `gate` exists, prints HELD and holds the prompt, then prints `then` if it's given; it runs after the end mark. fish draws what its prompt function prints only once it returns, so there HELD and `then` go to the terminal itself. */
+const gateHook = (shell: string, gate: string, then?: string): string =>
   shell === 'fish'
-    ? `function fish_prompt; if test -e '${gate}'; echo HELD >/dev/tty; while test -e '${gate}'; sleep 0.05; end; end; echo -n "> "; end\n`
+    ? `function fish_prompt; if test -e '${gate}'; echo HELD >/dev/tty; while test -e '${gate}'; sleep 0.05; end;${then ? ` echo ${then} >/dev/tty;` : ''} end; echo -n "> "; end\n`
     : shell === 'zsh'
-      ? `__gate() { if [[ -e '${gate}' ]]; then echo HELD; while [[ -e '${gate}' ]]; do sleep 0.05; done; fi }\nprecmd_functions+=(__gate)\n`
-      : `PROMPT_COMMAND='if [ -e "${gate}" ]; then echo HELD; while [ -e "${gate}" ]; do sleep 0.05; done; fi'\n`;
+      ? `__gate() { if [[ -e '${gate}' ]]; then echo HELD; while [[ -e '${gate}' ]]; do sleep 0.05; done;${then ? ` echo ${then};` : ''} fi }\nprecmd_functions+=(__gate)\n`
+      : `PROMPT_COMMAND='if [ -e "${gate}" ]; then echo HELD; while [ -e "${gate}" ]; do sleep 0.05; done;${then ? ` echo ${then};` : ''} fi'\n`;
 /** A prompt hook that, at the prompt after a command creates `arm`, removes it and creates `flag`: once `flag` exists, the command's output and its end mark have been written. */
 const flagHook = (shell: string, arm: string, flag: string): string =>
   shell === 'fish'
@@ -245,6 +245,14 @@ for (const sh of shells) {
       assert.deepEqual(out(alone, await ran(alone, both)), ['profile_ok|']);
       const sourced = await open(shell, { files: { '.bash_profile': 'FROM_PROFILE=profile_ok\n. "$HOME/.bashrc"\n', '.bashrc': 'FROM_BASHRC=rc_ok\n' } });
       assert.deepEqual(out(sourced, await ran(sourced, both)), ['profile_ok|rc_ok']);
+    });
+
+    test('a login profile that sets nounset, with no PROMPT_COMMAND, leaves the hooks working', { skip: sh.name !== 'bash' ? 'bash only' : false }, async () => {
+      const s = await open(shell, { rc: 'set -u\n' });
+      const ok = await ran(s, 'echo ok');
+      assert.deepEqual([out(s, ok), ok.end?.status], [['ok'], 0]);
+      const failed = await ran(s, 'false');
+      assert.equal(failed.end?.status, 1);
     });
 
     test('a startup file reading one key holds the session, starting, until it is answered', { skip: sh.name === 'fish' ? 'fish config has no prompt read here' : false }, async () => {
@@ -482,6 +490,16 @@ for (const sh of shells) {
       await pendingIs(s, 'zq');
     });
 
+    test("send's wait_for looks only from where its text went in, though the prompt it waited for printed a match", async () => {
+      const gate = newGate();
+      const s = await open(shell, { rc: gateHook(sh.name, gate, 'RELEASED') });
+      await heldAfter(s, gate, 'true', 'run');
+      const sent = s.send('echo AF""TER\r', { waitMs: 10_000, until: /^(RELEASED|AFTER)$/ });
+      fs.rmSync(gate);
+      const r = await sent;
+      assert.deepEqual([r.by, r.matched?.text], ['match', 'AFTER'], JSON.stringify(r.matched));
+    });
+
     test('after a blank line, which ends with no start mark, run waits for the prompt a hook holds, then runs', { skip: sh.name === 'fish' ? 'fish prints no end mark for a blank line' : false }, async () => {
       const gate = newGate();
       const s = await open(shell, { rc: gateHook(sh.name, gate) });
@@ -521,7 +539,7 @@ for (const sh of shells) {
         fs.writeFileSync(gate, '');
         assert.equal((await s.send('true\r', { waitMs: 5000, until: /^HOOK_READING$/ })).by, 'match', 'the hook is reading when the keys are sent');
         const sent = s.send('zq', { waitMs: 10_000 });
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await eventually('the send waits', () => (s as unknown as { wakers: Set<unknown> }).wakers.size > 0);
         fs.rmSync(gate);
         assert.equal((await sent).sent, true);
         await pendingIs(s, 'zq');
@@ -2067,7 +2085,7 @@ test('a synchronous ps that ignores TERM is killed at its timeout, so front retu
     const f = s.front();
     process.env.PATH = keep;
     assert.equal(fs.existsSync(started), true, 'front ran the ps that ignores TERM');
-    assert.equal(f.state, 'prompt');
+    assert.equal(f.state, 'unknown');
     assert.equal(fs.existsSync(finished), false, 'front returned before the ps that ignores TERM ran to its end');
   } finally {
     process.env.PATH = keep;
@@ -2181,8 +2199,13 @@ test("a suspend signal whose stopped check can't be read leaves whether the job 
   }
 });
 
-/** A job of its own group that ignores the hangup, as nohup's do, with its pid. */
-const hupProof = async (s: Session): Promise<number> => pidOf(s, await ran(s, `sh -c 'trap "" HUP; while :; do sleep 1; done' & echo "JOB:$!"`), 'JOB');
+/** A job of its own group that ignores the hangup, as nohup's do, with its pid, once it has set that. */
+const hupProof = async (s: Session): Promise<number> => {
+  const trapped = path.join(tmp, `trapped-${++gates}`);
+  const job = pidOf(s, await ran(s, `sh -c 'trap "" HUP; : > "$0"; while :; do sleep 1; done' '${trapped}' & echo "JOB:$!"`), 'JOB');
+  await eventually('the job ignores the hangup', () => fs.existsSync(trapped));
+  return job;
+};
 
 test('a close with force that joins a gentle close held at its listing makes it forced, so a job that ignores the hangup is KILLed', darwinOnly, async () => {
   const s = await open(which('bash') ?? '/bin/bash');
@@ -2261,6 +2284,103 @@ test('a close whose every signal to the shell fails names none as sent', async (
   } finally {
     pty.kill = real;
     killPid(s.pid);
+  }
+});
+
+test('a close whose log throws still closes', async () => {
+  const s = await open('/bin/sh', {
+    log: () => {
+      throw new Error('log refused');
+    },
+  });
+  await s.run('exit', { waitMs: 2000 });
+  await eventually('the shell exited', () => s.front().state === 'exited');
+  const c = await s.close({ deadline: by() });
+  assert.equal(c.unlisted, true, JSON.stringify(c));
+});
+
+test('a close that fails leaves none under way, so the next close starts again and finishes', async () => {
+  const s = await open('/bin/sh');
+  const dir = (s as unknown as { dir: string }).dir;
+  const t = (s as unknown as { t: { dispose(): void } }).t;
+  const dispose = t.dispose.bind(t);
+  let disposes = 0;
+  t.dispose = () => {
+    if (++disposes === 1) throw new Error('refused');
+    dispose();
+  };
+  await assert.rejects(s.close({ deadline: by() }), /refused/);
+  const c = await s.close({ deadline: by() });
+  assert.deepEqual([disposes, c.underway, fs.existsSync(dir)], [2, undefined, false], JSON.stringify(c));
+  assert.equal(s.front().state, 'exited');
+});
+
+test("a command whose command file can't be removed still ends with its status, and the failed removal is logged", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const logs: string[] = [];
+  const s = await open(which('bash')!, { log: (l) => logs.push(l) });
+  const dir = (s as unknown as { dir: string }).dir;
+  try {
+    const c = await ran(s, `chmod u-w '${dir}'; echo done`);
+    assert.deepEqual([out(s, c), c.end?.status], [['done'], 0]);
+    assert.match(logs.join('\n'), /couldn't be removed/);
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+});
+
+test("a close with force that joins a gentle close while it removes the session's directory still KILLs a job that ignores the hangup", async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const job = await hupProof(s);
+  const gate = newGate();
+  const held = path.join(tmp, `held-${++gates}`);
+  fs.writeFileSync(gate, '');
+  const promises = fs.promises as { rm: typeof fs.promises.rm };
+  const rm = promises.rm;
+  promises.rm = async (...args: Parameters<typeof rm>) => {
+    fs.writeFileSync(held, '');
+    await eventually('the gate goes', () => !fs.existsSync(gate), 30_000);
+    return rm(...args);
+  };
+  try {
+    const first = s.close({ deadline: by() });
+    await eventually('the gentle close removes the directory', () => fs.existsSync(held));
+    assert.equal(gone(job), false);
+    const second = s.close({ force: true, deadline: by() });
+    fs.rmSync(gate);
+    await Promise.all([first, second]);
+    promises.rm = rm;
+    await eventually('the job that ignores the hangup is gone', () => gone(job));
+  } finally {
+    promises.rm = rm;
+    fs.rmSync(gate, { force: true });
+    killPid(job);
+  }
+});
+
+test("a close where /proc hides other users' processes names its listing as incomplete", { skip: process.platform === 'linux' && !fs.existsSync('/proc/1') ? false : "/proc shows other users' processes here" }, async () => {
+  const logs: string[] = [];
+  const s = await open('/bin/sh', { log: (l) => logs.push(l) });
+  const c = await s.close({ deadline: by() });
+  assert.equal(c.unlisted, true, JSON.stringify(c));
+  assert.match(logs.join('\n'), /hides other users' processes/);
+});
+
+test("a listing's descendants of a process outside it are unknown, and of one inside it, only what that listing held", async () => {
+  const child = spawn('sh', ['-c', 'read x; sleep 30; :'], { stdio: ['pipe', 'ignore', 'ignore'] });
+  try {
+    const pid = child.pid!;
+    const f = await eventually('sh is listed', () => {
+      const now = proc.family(process.pid);
+      return now?.all.some((d) => d.pid === pid) ? now : undefined;
+    });
+    assert.equal(f.from(1), undefined);
+    assert.deepEqual(f.from(pid), []);
+    child.stdin.write('\n');
+    await eventually('sh started sleep', () => (proc.descendants(pid) ?? []).length > 0);
+    assert.deepEqual(f.from(pid), []);
+  } finally {
+    for (const d of proc.descendants(child.pid!) ?? []) killPid(d.pid);
+    child.kill('SIGKILL');
   }
 });
 
@@ -2438,6 +2558,40 @@ test("the session's own shell, given the integration in place, is no longer foll
   assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
 });
 
+test("the session's own shell with the integration, replaced by a program a key bound at its prompt runs, isn't taken for its prompt, and run types nothing into that program", { skip: !which('bash') ? 'bash is needed' : bashBelow(which('bash')!, 5, 0) ? 'bind -x is tried only in bash 5 here' : false }, async () => {
+  const s = await open(which('bash')!);
+  const capture = path.join(tmp, `capture-${++gates}`);
+  await ran(s, `bind -x '"\\C-t": exec cat > "${capture}"'`);
+  await s.send('', { waitMs: 2000, keys: ['C-t'], quietMs: 300 });
+  await eventually('the shell is replaced by cat', () => /^cat\b/.test(proc.argv(s.pid) ?? ''));
+  const f = s.front();
+  assert.ok((f.state === 'waiting' || f.state === 'running') && !f.process.shell && /^cat\b/.test(f.process.argv), JSON.stringify(f));
+  assert.equal((await s.run('echo MUST_NOT_REACH_CAT', { waitMs: 300 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+  assert.doesNotMatch(fs.readFileSync(capture, 'utf8'), /MUST_NOT_REACH_CAT|__tsm/);
+});
+
+test("the session's own shell, given the integration in place, reads as unknown while its command line can't be read, and run types nothing", darwinOnly, async () => {
+  const s = await open('/bin/sh');
+  await s.run(`exec ${which('bash') ?? '/bin/bash'} --norc --noprofile`, { waitMs: 5000 });
+  await eventually('bash is at its prompt', () => /bash/.test(proc.argv(s.pid) ?? '') && s.front().state === 'prompt');
+  assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+  const flag = path.join(tmp, `fails-${++gates}`);
+  const fake = fakePs(`*command=*) [ -e '${flag}' ] && { echo 'ps: reading failed' >&2; exit 1; };;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    assert.equal(s.front().state, 'prompt');
+    fs.writeFileSync(flag, '');
+    const f = s.front();
+    assert.equal(f.state, 'unknown', JSON.stringify(f));
+    assert.equal((await s.run('echo x', { waitMs: 300 })).kind, 'refused');
+  } finally {
+    process.env.PATH = keep;
+    fs.rmSync(flag, { force: true });
+  }
+});
+
 test("a run whose command file or terminal write fails leaves no command, file or submitted line behind", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open(which('bash')!);
   const dir = (s as unknown as { dir: string }).dir;
@@ -2445,18 +2599,21 @@ test("a run whose command file or terminal write fails leaves no command, file o
   // A file where the session's directory was makes the command file's write fail.
   fs.renameSync(dir, `${dir}.away`);
   fs.writeFileSync(dir, '');
-  await assert.rejects(s.run('echo two', { waitMs: 2000 }));
+  await assert.rejects(s.run('echo two', { waitMs: 2000 }), { code: 'ENOTDIR' });
   fs.rmSync(dir);
   fs.renameSync(`${dir}.away`, dir);
   assert.equal(s.command(ran1.id + 1), undefined);
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith(String(ran1.id + 1))), []);
   const pty = (s as unknown as { p: { write(d: string): void } }).p;
   const write = pty.write.bind(pty);
+  let writes = 0;
   pty.write = () => {
+    writes++;
     throw new Error('refused');
   };
-  await assert.rejects(s.run('echo three', { waitMs: 2000 }));
+  await assert.rejects(s.run('echo three', { waitMs: 2000 }), /refused/);
   pty.write = write;
+  assert.equal(writes, 1);
   assert.equal(s.command(ran1.id + 2), undefined);
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith(String(ran1.id + 2))), []);
   assert.deepEqual(out(s, await ran(s, 'echo four')), ['four']);
@@ -2468,17 +2625,62 @@ test("a send whose terminal write fails leaves the prompt's line as it was", { s
   await ran(s, 'echo one');
   const pty = (s as unknown as { p: { write(d: string): void } }).p;
   const write = pty.write.bind(pty);
+  let writes = 0;
   pty.write = () => {
+    writes++;
     throw new Error('refused');
   };
-  await assert.rejects(s.send('echo two\r', { waitMs: 2000 }));
-  await assert.rejects(s.send('echo three', { waitMs: 2000 }));
+  await assert.rejects(s.send('echo two\r', { waitMs: 2000 }), /refused/);
+  await assert.rejects(s.send('echo three', { waitMs: 2000 }), /refused/);
   pty.write = write;
+  assert.equal(writes, 2);
   const f = s.front();
   assert.ok(f.state === 'prompt' && f.pending === undefined, JSON.stringify(f));
   assert.deepEqual(out(s, await ran(s, 'echo four')), ['four']);
   await s.close({ force: true, deadline: by() });
 });
+
+test('a run whose terminal write fails takes no older command from those kept', { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open(which('bash')!);
+  const first = await ran(s, 'echo one');
+  const inner = s as unknown as { p: { write(d: string): void }; commandChars: number };
+  inner.commandChars = Number.MAX_SAFE_INTEGER / 2;
+  const write = inner.p.write.bind(inner.p);
+  let writes = 0;
+  inner.p.write = () => {
+    writes++;
+    throw new Error('refused');
+  };
+  try {
+    await assert.rejects(s.run('echo two', { waitMs: 2000 }), /refused/);
+  } finally {
+    inner.p.write = write;
+  }
+  assert.equal(writes, 1);
+  assert.equal(s.command(first.id), first);
+});
+
+for (const via of ['run', 'send'] as const) {
+  test(`a ${via} whose terminal write fails at a quiet shell without the integration leaves its prompt in front`, async () => {
+    const s = await open('/bin/sh');
+    await eventually('the prompt is in front', () => s.front().state === 'prompt');
+    const inner = s as unknown as { p: { write(d: string): void } };
+    const write = inner.p.write.bind(inner.p);
+    let writes = 0;
+    inner.p.write = () => {
+      writes++;
+      throw new Error('refused');
+    };
+    try {
+      await assert.rejects(via === 'run' ? s.run('echo two', { waitMs: 2000 }) : s.send('echo two', { waitMs: 2000 }), /refused/);
+    } finally {
+      inner.p.write = write;
+    }
+    assert.equal(writes, 1);
+    const f = s.front();
+    assert.equal(f.state, 'prompt', JSON.stringify(f));
+  });
+}
 
 test("an integrate whose last hook write fails leaves no far shell followed, and a second integrate gives it the integration", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open(which('bash')!);
@@ -2489,15 +2691,20 @@ test("an integrate whose last hook write fails leaves no far shell followed, and
   const chains = inner.chains.length;
   const write = inner.p.write.bind(inner.p);
   // The far shell's chain is added just before the last hook is written, so that is the write that fails.
+  let thrown = false;
   inner.p.write = (d: string) => {
-    if (inner.chains.length > chains) throw new Error('refused');
+    if (inner.chains.length > chains) {
+      thrown = true;
+      throw new Error('refused');
+    }
     write(d);
   };
   try {
-    await assert.rejects(s.integrate({ waitMs: 10_000 }));
+    await assert.rejects(s.integrate({ waitMs: 10_000 }), /refused/);
   } finally {
     inner.p.write = write;
   }
+  assert.ok(thrown, 'the last hook write was the one that failed');
   assert.equal(inner.chains.length, chains);
   const f = s.front();
   assert.ok(f.state !== 'prompt' && !('within' in f && f.within), JSON.stringify(f));
@@ -2548,8 +2755,10 @@ test("a far shell's carrier whose own process ends, while its group goes on with
 test("a far command whose carrier is suspended is no longer followed, and its end says the carrier left the terminal, not that it ended", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open('/bin/sh');
   const w = await farThen(s, 'true');
-  const r = await s.run('sleep 300', { waitMs: 300 });
+  const from = s.lines(0).to - 1;
+  const r = await s.run('echo STARTED; sleep 300', { waitMs: 300 });
   assert.equal(r.kind, 'running', JSON.stringify(r));
+  assert.equal((await s.wait({ kind: 'match', pattern: /^STARTED$/ }, { waitMs: 10_000, from })).by, 'match', 'the far shell started the command');
   // What Ctrl-Z does to a local ssh: its group stops, and the shell takes the terminal back.
   process.kill(-w, 'SIGSTOP');
   try {
@@ -2572,8 +2781,10 @@ test("at the end mark of a shell with the integration, a far command whose carri
   const f = s.front();
   const w = f.state === 'prompt' && f.within ? f.within.pgid : 0;
   assert.ok(w > 0, JSON.stringify(f));
-  const r = await s.run('sleep 300', { waitMs: 300 });
+  const from = s.lines(0).to - 1;
+  const r = await s.run('echo STARTED; sleep 300', { waitMs: 300 });
   assert.equal(r.kind, 'running', JSON.stringify(r));
+  assert.equal((await s.wait({ kind: 'match', pattern: /^STARTED$/ }, { waitMs: 10_000, from })).by, 'match', 'the far shell started the command');
   try {
     // With ps failing, nothing can read who holds the terminal, so only the session shell's end mark can drop the far chain.
     await failing('ps', '/bin/ps', async (ps) => {
@@ -2594,10 +2805,13 @@ test("a local shell given the integration stays followed while a job it started 
   const s = await open('/bin/sh');
   // A local bash, as su or sudo -i would start: its jobs take the terminal in groups of their own.
   await localFar(s);
-  const job = await s.run('sleep 2', { waitMs: 500 });
+  const gate = newGate();
+  fs.writeFileSync(gate, '');
+  const job = await s.run(holdJob(gate), { waitMs: 500 });
   assert.equal(job.kind, 'running', JSON.stringify(job));
   const f = s.front();
   assert.ok(f.state === 'running' && f.within, JSON.stringify(f));
+  fs.rmSync(gate);
   const ended = await s.wait({ kind: 'end' }, { waitMs: 10_000, from: 0 });
   assert.equal(ended.by, 'end');
   const end = job.kind === 'running' ? job.command.end : undefined;
@@ -2678,8 +2892,48 @@ test('an integrate whose carrier ends while it waits for a hook to run stops as 
   const r = await integrating;
   assert.deepEqual([r.kind, r.kind === 'incomplete' && r.step, r.kind === 'incomplete' && r.by], ['incomplete', 'hooks', 'exited'], JSON.stringify(r));
   assert.match((r.kind === 'incomplete' && r.ended) || '', /^\S*script /, JSON.stringify(r));
+  await inFront(s, /^cat\b/);
   await s.close({ force: true, deadline: by() });
-  assert.equal(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', '');
+  assert.equal(fs.readFileSync(capture, 'utf8'), '');
+});
+
+test("an integrate whose second probe line gets no answer within the wait stops at the probe as timed out, rather than naming no shell", async () => {
+  const s = await open('/bin/sh');
+  const gate = newGate();
+  const read = path.join(tmp, `read-${++gates}`);
+  fs.writeFileSync(gate, '');
+  const fake = path.join(tmp, `fake-far-${++gates}`);
+  fs.writeFileSync(
+    fake,
+    `#!/bin/sh\nIFS= read -r line\ncall=$(printf '%s\\n' "$line" | sed -n 's/.*133;K;\\([0-9]*\\);.*/\\1/p')\nprintf '\\033]133;K;%s;;;\\007' "$call"\nIFS= read -r zero\n: > '${read}'\nwhile [ -e '${gate}' ]; do sleep 0.05; done\n`,
+    { mode: 0o755 },
+  );
+  assert.equal((await s.run(process.platform === 'darwin' ? `script -q /dev/null ${fake}` : `script -qfc ${fake} /dev/null`, { waitMs: 200 })).kind, 'running');
+  await inFront(s, /script/);
+  const pts = (s as unknown as { pts: string }).pts;
+  await eventually('script holds the terminal out of canonical mode', () => proc.modes(pts)?.canonical === false);
+  try {
+    const r = await s.integrate({ waitMs: 3000 });
+    assert.ok(fs.existsSync(read), 'the stand-in read the second probe line');
+    assert.deepEqual([r.kind, r.kind === 'incomplete' && r.step, r.kind === 'incomplete' && r.by], ['incomplete', 'probe', 'timeout'], JSON.stringify(r));
+  } finally {
+    fs.rmSync(gate, { force: true });
+  }
+});
+
+test('the nonce a shell below still expects stays redacted however many commands the shell above it runs', { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open(which('bash')!);
+  const from = s.lines(0).to - 1;
+  const r = await s.run(`env -i HOME='${lastHome()}' PATH='${process.env.PATH ?? '/usr/bin:/bin'}' TERM=xterm-256color PS1='far> ' SAVED="$__tsm_r" '${which('bash')!}' --norc --noprofile -i`, { waitMs: 200 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  assert.equal((await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from })).by, 'match');
+  assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+  const below = (s as unknown as { chains: Array<{ expected: { random: string } }> }).chains[0]!.expected.random;
+  for (let i = 0; i < 70; i++) await ran(s, 'true');
+  const c = await ran(s, 'echo "S:$SAVED"');
+  assert.deepEqual(out(s, c), [`S:${'[redacted]'.padEnd(below.length, '.')}`]);
+  assert.ok(!s.lines(0).lines.some((l) => l.includes(below)));
+  assert.ok(!s.screen().rows.some((l) => l.includes(below)));
 });
 
 /** A local bash given the integration in `s`, at its prompt; returns its group. */
@@ -2794,11 +3048,12 @@ test("with the terminal's foreground group unread, a program in front of a shell
   await s.close({ force: true, deadline: by() });
 });
 
-test("with the terminal's foreground group unread, a shell with marks running a command is unknown, and one at its prompt is still at it", { skip: process.platform !== 'darwin' ? "here the shell's group is read from /proc, not from ps" : false }, async () => {
+test("with the terminal's foreground group unread, a shell with marks is unknown, running a command and at its prompt too, and run types nothing", { skip: process.platform !== 'darwin' ? "here the shell's group is read from /proc, not from ps" : false }, async () => {
   const s = await open(which('bash') ?? '/bin/bash');
   await failing('ps', '/bin/ps', async (ps) => {
     ps.on();
-    assert.equal(s.front().state, 'prompt');
+    assert.equal(s.front().state, 'unknown');
+    assert.equal((await s.run('echo SHOULD_NOT_RUN', { waitMs: 300 })).kind, 'refused');
     ps.off();
     const r = await s.run('sleep 30', { waitMs: 300 });
     assert.equal(r.kind, 'running', JSON.stringify(r));
@@ -2837,8 +3092,10 @@ test('text on the prompt\'s line past the cursor is pending too, so run refuses 
   const s = await open(which('bash')!);
   await s.send('echo UNWANTED', { waitMs: 2000, quietMs: 100 });
   await pendingIs(s, 'echo UNWANTED');
+  const typed = s.screen().cursor;
   // Ctrl-A moves readline's cursor to the start of the line, so nothing is left of it before the cursor.
   await s.send('', { waitMs: 2000, keys: ['C-a'], quietMs: 200 });
+  await eventually('the cursor moved back', () => s.screen().cursor.col < typed.col);
   await pendingIs(s, 'echo UNWANTED');
   assert.equal((await s.run('echo x', { waitMs: 2000 })).kind, 'refused');
   await s.send('', { waitMs: 2000, keys: ['C-e', 'C-u'], quietMs: 200 });
@@ -2861,6 +3118,7 @@ for (const [name, rc] of [
     assert.ok(f.state === 'prompt' && f.pending === undefined, JSON.stringify(f));
     assert.deepEqual(out(s, await ran(s, 'echo ran')), ['ran']);
     await s.send('echo half', { waitMs: 2000, quietMs: 200 });
+    await eventually('the typed text is drawn', () => s.screen().rows.some((l) => l.includes('echo half')));
     assert.equal((await s.run('echo x', { waitMs: 2000 })).kind, 'refused');
     await s.close({ force: true, deadline: by() });
   });
@@ -2871,9 +3129,23 @@ test("text a line editor draws on the prompt's line with the cursor after it isn
   // print -z puts the text in the line editor at the next prompt, with the cursor after it, before anything is sent there.
   await ran(s, "print -z 'echo PUSHED'");
   await pendingIs(s, 'echo PUSHED');
+  const pushed = s.screen().cursor;
   await s.send('', { waitMs: 2000, keys: ['C-a'], quietMs: 200 });
+  await eventually('the cursor moved back', () => s.screen().cursor.col < pushed.col);
   await pendingIs(s, 'echo PUSHED');
   assert.equal((await s.run('echo x', { waitMs: 2000 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+});
+
+test("text sent at the prompt stays pending, so run refuses, until the prompt's line or the cursor changes, though output that draws nothing there is parsed", { skip: which('zsh') ? false : 'zsh is needed' }, async () => {
+  const s = await open(which('zsh')!);
+  await ran(s, "__titled() { print -n '\\e]0;TITLED\\a' }; zle -N __titled; bindkey Q __titled");
+  await s.send('Q', { waitMs: 2000, quietMs: 200 });
+  await eventually('the title the key set is parsed', () => s.screen().title === 'TITLED');
+  await pendingIs(s, 'Q');
+  assert.equal((await s.run('echo x', { waitMs: 2000 })).kind, 'refused');
+  await s.send('', { waitMs: 2000, keys: ['C-c'], quietMs: 200 });
+  assert.deepEqual(out(s, await ran(s, 'echo after')), ['after']);
   await s.close({ force: true, deadline: by() });
 });
 
