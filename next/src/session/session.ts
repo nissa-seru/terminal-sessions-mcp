@@ -127,7 +127,8 @@ interface Chain {
   inCommand: boolean;
   submitted: boolean;
   sentPending: string | undefined;
-  sentOutputs: number;
+  /** The prompt's line and the cursor as they were when `send` last wrote at `at`. */
+  sentView: { at: Pos; line: string; cursor: Pos } | undefined;
   promptAt: Pos | undefined;
   /** At a shell without integration: `lastWrite` when `promptAt` was taken, so a prompt drawn later with nothing typed since moves it. */
   promptAtWrite: number;
@@ -172,7 +173,7 @@ const newChain = (expected: Nonce, cwd: string): Chain => ({
   inCommand: false,
   submitted: false,
   sentPending: undefined,
-  sentOutputs: -1,
+  sentView: undefined,
   promptAt: undefined,
   promptAtWrite: -1,
   running: undefined,
@@ -775,8 +776,8 @@ class LiveSession implements Session {
    * blank. Otherwise it's the whole line from the end mark, past the cursor too, unless that's the line as drawn at rest. Text past
    * the cursor counts only then, since a line editor can draw its own there, as fish draws its suggestion. The rest is taken while
    * nothing has been sent at this prompt and the cursor sits at the end mark, so text a line editor draws there with the cursor
-   * after it isn't taken in. With no rest taken, any text counts. Until output that came after the last `send` here is parsed,
-   * what that sent.
+   * after it isn't taken in. With no rest taken, any text counts. Until the prompt's line or the cursor changes after the last `send`
+   * here, what was sent: output from elsewhere, or a far echo still on its way, says nothing of the line.
    */
   private pending(): string | undefined {
     const b = this.top.promptAt;
@@ -793,7 +794,9 @@ class LiveSession implements Session {
     if (this.top.sentAt !== b && cur.line === b.line && cur.col === b.col) this.top.rest = { at: b, text };
     if (!emptyText(text) && !(this.top.rest?.at === b && this.top.rest.text === text)) return text.replace(/^[ \n]+|[ \n]+$/g, '');
     const sent = this.top.sentPending;
-    return sent !== undefined && /[^\x00-\x20\x7f]/.test(sent) && (this.outputs === this.top.sentOutputs || !this.t.caughtUp) ? sent : undefined;
+    if (sent === undefined || !/[^\x00-\x20\x7f]/.test(sent)) return undefined;
+    const v = this.top.sentView;
+    return !this.t.caughtUp || (v?.at === b && v.line === text && v.cursor.line === cur.line && v.cursor.col === cur.col) ? sent : undefined;
   }
 
   /**
@@ -953,7 +956,7 @@ class LiveSession implements Session {
     const keys = opts.keys?.length ? inputBytes(undefined, opts.keys, { appCursor: this.t.appCursor }) : '';
     const bytes = opts.paste ? `${PASTE_START}${text}${PASTE_END}${keys}` : text + keys;
     if (!this.prompted) this.frontKey = '';
-    const before = { submitted: this.top.submitted, sentPending: this.top.sentPending, sentAt: this.top.sentAt };
+    const before = { submitted: this.top.submitted, sentPending: this.top.sentPending, sentAt: this.top.sentAt, sentView: this.top.sentView };
     if ((this.top.atPrompt || this.plain) && !this.top.submitted) {
       // A line break inside a paste is held by the line editor for editing; only the keys after it can submit the line.
       if (/[\r\n]/.test(opts.paste ? keys : bytes)) {
@@ -967,14 +970,17 @@ class LiveSession implements Session {
     let matched: Match | undefined;
     let by: SendOutcome['by'] = 'timeout';
     try {
-      if (this.top.promptAt) this.top.sentAt = this.top.promptAt;
+      const b = this.top.promptAt;
+      if (b) {
+        this.top.sentAt = b;
+        this.top.sentView = { at: b, line: this.promptLine(b), cursor: this.t.pos() };
+      }
       try {
         this.p.write(bytes);
       } catch (e) {
         Object.assign(this.top, before);
         throw e;
       }
-      this.top.sentOutputs = this.outputs;
       const r = await this.until(deadline, () => {
         if (this.closed) return 'closed' as const;
         if (this.exitInfo) return 'exited' as const;
