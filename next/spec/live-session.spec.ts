@@ -785,6 +785,15 @@ for (const sh of shells) {
       }
     });
 
+    test('a shell replaced by exec typed through send keeps working, without statuses', async () => {
+      const s = await open(shell);
+      await s.send('exec /bin/sh\r', { waitMs: 3000, quietMs: 300 });
+      await eventually('sh replaced the shell', () => /^(\/bin\/)?sh\b/.test(proc.argv(s.pid) ?? ''));
+      const after = await s.run('echo after-exec', { waitMs: 8000 });
+      assert.equal(after.kind, 'ended', JSON.stringify(after));
+      if (after.kind === 'ended') assert.deepEqual(out(s, after.command), ['after-exec']);
+    });
+
     test('a program exec\'d in the shell\'s place is a program in front, not a shell, and run refuses', async () => {
       const s = await open(shell);
       const r = await s.run('exec cat', { waitMs: 3000 });
