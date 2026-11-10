@@ -267,7 +267,6 @@ class LiveSession implements Session {
       this.outputs++;
       this.t.write(d, () => {
         this.parses++;
-        this.sentSeen();
         this.checkWatches();
         this.wake();
       });
@@ -804,7 +803,7 @@ class LiveSession implements Session {
     const sent = this.top.sentPending;
     if (sent === undefined || !/[^\x00-\x20\x7f]/.test(sent)) return undefined;
     const v = this.top.sentView;
-    return !this.t.caughtUp || (v?.at === b && !v.changed) ? sent : undefined;
+    return !this.t.caughtUp || (v?.at === b && v.line === text && v.cursor.line === cur.line && v.cursor.col === cur.col) ? sent : undefined;
   }
 
   /** Marks the view `send` took as changed once a parse leaves the prompt's line or the cursor other than they were. */
