@@ -470,10 +470,17 @@ class LiveSession implements Session {
     } catch {
       return '';
     }
+    this.remove(f);
+    return text;
+  }
+
+  /** Removes a file of the session's; one that can't be removed is logged, and what removes it goes on. */
+  private remove(f: string): void {
     try {
       fs.rmSync(f, { force: true });
-    } catch {}
-    return text;
+    } catch (e) {
+      this.note(`session ${JSON.stringify(this.name)}: ${f} couldn't be removed: ${(e as Error).message}`);
+    }
   }
 
   private started(at: Pos, text: string | undefined): void {
@@ -551,7 +558,7 @@ class LiveSession implements Session {
       this.commandChars += c.end.flushed.length;
       this.trimCommands();
     }
-    for (const f of this.files.get(c.id) ?? []) fs.rmSync(f, { force: true });
+    for (const f of this.files.get(c.id) ?? []) this.remove(f);
     this.files.delete(c.id);
     const takers: Call[] = [];
     for (const call of this.calls) {
@@ -904,7 +911,7 @@ class LiveSession implements Session {
     const id = this.nextId();
     const cf: { files: Array<{ path: string; body: string }>; line: string } = farLine ? { files: [], line: farLine } : integration.commandFile(this.plain ? 'none' : this.kind, this.dir, id, text);
     const removeFiles = (): void => {
-      for (const f of cf.files) fs.rmSync(f.path, { force: true });
+      for (const f of cf.files) this.remove(f.path);
     };
     try {
       for (const f of cf.files) fs.writeFileSync(f.path, f.body, { mode: 0o600 });
