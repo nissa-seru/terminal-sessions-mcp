@@ -193,7 +193,8 @@ export async function onTerminal(shell: number, pts: string, l: Listing): Promis
         if (f?.[4] === tty && Number(f[2]) > 0) out.push({ pid: Number(d), pgrp: Number(f[2]) });
       }
       // A shell that exited during the scan took the terminal from the rest, so some may be missing.
-      return out.some((d) => d.pid === shell) ? out : fail("the shell itself wasn't among them");
+      if (!out.some((d) => d.pid === shell)) return fail("the shell itself wasn't among them");
+      return statOf(shell)?.[4] === tty ? out : fail('the shell left the terminal while they were read');
     }
     const s = await psWithin(['-t', pts.slice(pts.lastIndexOf('/') + 1), '-o', 'pid=,pgid='], l);
     if (s.status !== 0) return fail(failure(s, s.timeoutMs));
