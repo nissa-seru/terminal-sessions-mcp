@@ -3203,3 +3203,16 @@ test('a shell without integration opens and runs, with no status', async () => {
   assert.equal(r.kind, 'ended');
   assert.equal(r.kind === 'ended' ? r.command.end?.status : 'x', undefined);
 });
+
+test('probe 32: bash under a profile with set -u', { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  for (const rc of ['set -u\n', 'true\n']) {
+    const s = await open(which('bash')!, { rc });
+    console.log(`PROBE32 rc=${JSON.stringify(rc)} startup=${JSON.stringify(s.startupText().slice(-400))}`);
+    for (const cmd of ['echo "V=$BASH_VERSION opts=$-"; declare -p PROMPT_COMMAND 2>&1', '__tsm_hook; echo "hook=$?"', 'echo ok', 'false']) {
+      const r = await s.run(cmd, { waitMs: 5000 });
+      console.log(`PROBE32 ${JSON.stringify(cmd)} kind=${r.kind} status=${r.kind !== 'refused' ? r.command.end?.status : '-'} out=${JSON.stringify(r.kind !== 'refused' ? out(s, r.command) : r.front)}`);
+    }
+    for (const l of s.lines(0).lines.slice(-14)) console.log(`PROBE32 line ${JSON.stringify(l.slice(0, 200))}`);
+    await s.close({ force: true, deadline: by() });
+  }
+});
