@@ -2931,3 +2931,15 @@ test('a shell without integration opens and runs, with no status', async () => {
   assert.equal(r.kind, 'ended');
   assert.equal(r.kind === 'ended' ? r.command.end?.status : 'x', undefined);
 });
+
+for (const name of ['bash', 'zsh']) {
+  test(`probe 31: integrate with a far ${name} that has nounset on`, { skip: which(name) ? false : `${name} is needed` }, async () => {
+    const s = await open('/bin/sh');
+    const from = s.lines(0).to - 1;
+    assert.equal((await s.run(relayed(which(name)!, {}, name === 'bash' ? ['-u'] : ['-o', 'nounset']), { waitMs: 200 })).kind, 'running');
+    assert.equal((await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from })).by, 'match');
+    const r = await s.integrate({ waitMs: 5000 });
+    console.log(`PROBE31 ${name} ${JSON.stringify({ kind: r.kind, step: r.kind === 'incomplete' ? r.step : undefined, by: r.kind === 'incomplete' ? r.by : undefined })}`);
+    for (const l of s.lines(from).lines.slice(-8)) console.log(`PROBE31 ${name} line ${JSON.stringify(l.slice(0, 200))}`);
+  });
+}
