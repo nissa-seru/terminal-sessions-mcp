@@ -2438,6 +2438,37 @@ test("the session's own shell, given the integration in place, is no longer foll
   assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
 });
 
+test("the session's own shell with the integration, replaced by a program a key bound at its prompt runs, isn't taken for its prompt, and run types nothing into that program", { skip: !which('bash') ? 'bash is needed' : bashBelow(which('bash')!, 5, 0) ? 'bind -x is tried only in bash 5 here' : false }, async () => {
+  const s = await open(which('bash')!);
+  const capture = path.join(tmp, `capture-${++gates}`);
+  await ran(s, `bind -x '"\\C-t": exec cat > "${capture}"'`);
+  await s.send('', { waitMs: 2000, keys: ['C-t'], quietMs: 300 });
+  await eventually('the shell is replaced by cat', () => /^cat\b/.test(proc.argv(s.pid) ?? ''));
+  const f = s.front();
+  assert.ok((f.state === 'waiting' || f.state === 'running') && !f.process.shell && /^cat\b/.test(f.process.argv), JSON.stringify(f));
+  assert.equal((await s.run('echo MUST_NOT_REACH_CAT', { waitMs: 300 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+  assert.doesNotMatch(fs.readFileSync(capture, 'utf8'), /MUST_NOT_REACH_CAT|__tsm/);
+});
+
+test("the session's own shell with the integration reads as unknown at its prompt while its command line can't be read, and run types nothing", darwinOnly, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const flag = path.join(tmp, `fails-${++gates}`);
+  const fake = fakePs(`*command=*) [ -e '${flag}' ] && { echo 'ps: reading failed' >&2; exit 1; };;`);
+  const keep = process.env.PATH;
+  try {
+    process.env.PATH = `${fake}:${keep}`;
+    assert.equal(s.front().state, 'prompt');
+    fs.writeFileSync(flag, '');
+    const f = s.front();
+    assert.equal(f.state, 'unknown', JSON.stringify(f));
+    assert.equal((await s.run('echo x', { waitMs: 300 })).kind, 'refused');
+  } finally {
+    process.env.PATH = keep;
+    fs.rmSync(flag, { force: true });
+  }
+});
+
 test("a run whose command file or terminal write fails leaves no command, file or submitted line behind", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open(which('bash')!);
   const dir = (s as unknown as { dir: string }).dir;
