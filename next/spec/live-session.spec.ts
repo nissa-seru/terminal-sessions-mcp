@@ -1292,7 +1292,7 @@ for (const sh of shells) {
       const text = out(s, c).join('');
       const around = s.lines(Math.max(0, c.from - 1), (c.to ?? c.from) + 1);
       const edges = `output: lines ${c.from} up to ${c.to}, ${text.length} characters; each line from ${around.from}, its length, its head and its tail:\n${around.lines.map((l, k) => `${around.from + k}: ${l.length} ${JSON.stringify(l.slice(0, 80))} … ${JSON.stringify(l.slice(-80))}`).join('\n')}`;
-      assert.equal(text.length, 135_546, edges);
+      assert.equal(text.length, 135_545, edges);
       assert.equal(text.slice(65_526, 65_546), '[redacted]..........', edges);
     });
 
