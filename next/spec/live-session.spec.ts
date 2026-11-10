@@ -2562,6 +2562,17 @@ test('a cwd that is not a directory is refused as invalid_argument', async () =>
   await assert.rejects(open(which('bash') ?? '/bin/sh', { cwd: path.join(tmp, 'missing') }), { code: 'invalid_argument' });
 });
 
+test("a no-break space typed at the prompt is pending, so run refuses, while ordinary spaces are not", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open(which('bash')!);
+  await s.send('\u00a0', { waitMs: 2000, quietMs: 200 });
+  await pendingIs(s, '\u00a0');
+  assert.equal((await s.run('echo x', { waitMs: 2000 })).kind, 'refused');
+  await s.send('', { waitMs: 2000, keys: ['C-e', 'C-u'], quietMs: 200 });
+  await s.send('  ', { waitMs: 2000, quietMs: 200 });
+  assert.deepEqual(out(s, await ran(s, 'echo spaced')), ['spaced']);
+  await s.close({ force: true, deadline: by() });
+});
+
 test('text on the prompt\'s line past the cursor is pending too, so run refuses until the line is cleared', { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open(which('bash')!);
   await s.send('echo UNWANTED', { waitMs: 2000, quietMs: 100 });
