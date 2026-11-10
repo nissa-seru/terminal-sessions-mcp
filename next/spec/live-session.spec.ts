@@ -1290,6 +1290,8 @@ for (const sh of shells) {
       const s = await open(shell);
       const c = await ran(s, `head -c 65526 /dev/zero | tr '\\0' 1; printf %s "$__tsm_r"; head -c 70000 /dev/zero | tr '\\0' 1; echo`, 30_000);
       const text = out(s, c).join('');
+      const pl = s.lines(c.from - 1, c.from).lines[0] ?? '';
+      console.log(`PROBE61-orig from=${c.from} to=${c.to} promptLine=${pl.length} n=${out(s, c).length} total=${text.length} prompt=${JSON.stringify(pl)}`);
       assert.equal(text.length, 135_546);
       assert.equal(text.slice(65_526, 65_546), '[redacted]..........');
     });
