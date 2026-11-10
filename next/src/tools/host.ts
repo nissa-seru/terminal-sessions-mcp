@@ -609,7 +609,13 @@ export class Host {
 
   private async close(caller: Caller, e: Entry, a: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
     e.closing = true;
-    const [exit] = await Promise.all([e.session.close({ force: a.force === true, deadline: mono() + WAIT_MAX_S * 1000 }), Promise.all(e.settling)]);
+    let exit: Closed;
+    try {
+      [exit] = await Promise.all([e.session.close({ force: a.force === true, deadline: mono() + WAIT_MAX_S * 1000 }), Promise.all(e.settling)]);
+    } catch (err) {
+      if (!e.finished) e.closing = false;
+      throw err;
+    }
     if (exit.underway) return ok(`[${e.name} · still closing]\nThe shell ${underwayText(exit, "this call's wait")}.`, { session: e.name, exit });
     const how = exit.unconfirmed ? unconfirmedText(exit) : exitText(exit);
     const unlisted = exit.unlisted ? " The session couldn't list every process it started, so jobs it started may live on." : '';

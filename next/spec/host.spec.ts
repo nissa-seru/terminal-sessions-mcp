@@ -550,6 +550,27 @@ test("a command's end that no call takes, during a close, removes the older wait
   assert.deepEqual(r.structured.unseen ?? [], [], r.text);
 });
 
+test("a close whose session's close fails leaves the session open, so its next end still wakes", async () => {
+  const { host, opened } = setup();
+  const wakes: Wake[] = [];
+  host.subscribe('a', async (w) => (wakes.push(w), true));
+  await host.call(agent(), 'open', { name: 'main' });
+  const s = opened[0]!;
+  const close = s.close.bind(s);
+  s.close = async () => {
+    throw new Error('the listing failed');
+  };
+  const failed = await host.call(agent(), 'close', { name: 'main' });
+  assert.equal(failed.structured.error, 'backend_failure', failed.text);
+  s.close = close;
+  running(s);
+  const r = await host.call(agent(), 'run', { name: 'main', command: 'sleep 9', wait: 0 });
+  assert.equal(r.structured.running, true, r.text);
+  s.end(0);
+  await settle();
+  assert.equal(wakes.length, 1, 'the end of a command in a session still open wakes');
+});
+
 test('closing a session wakes no one, though its running command ends and its shell exits', async () => {
   const { host, opened } = setup();
   const wakes: Wake[] = [];
