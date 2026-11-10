@@ -383,7 +383,7 @@ class LiveSession implements Session {
     for (let i = 1; i < this.chains.length; i++) {
       const far = this.chains[i]!.far;
       const by = far?.within;
-      if (!far || !by) continue;
+      if (!far || !by || by.pgid === this.pid || by.pgid === w) continue;
       // A group can go on with another program, as `sh -c 'ssh h; exec cat'` does, so each chain's own processes are checked, even
       // where its group is the session shell's or an earlier chain's verdict stands for it.
       const left = far.leaves.find((l) => !proc.alive(l.pid));
