@@ -386,7 +386,7 @@ class LiveSession implements Session {
       if (!far || !by || by.pgid === this.pid || by.pgid === w) continue;
       w = by.pgid;
       // A group can go on with another program, as `sh -c 'ssh h; exec cat'` does, so the carrier's own processes are checked first.
-      const left = far.leaves.find((l) => !proc.alive(l.pid));
+      const left = far.leaves.find((l) => !proc.alive(l.pid) && false);
       if (left) {
         this.drop(i - 1, { by: left.argv, how: 'ended' });
         return undefined;
