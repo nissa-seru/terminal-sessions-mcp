@@ -1240,7 +1240,13 @@ class LiveSession implements Session {
       this.chains.push(chain);
       this.probe!.chain = chain;
       this.lastWrite = mono();
-      this.p.write(lines.at(-1)!);
+      try {
+        this.p.write(lines.at(-1)!);
+      } catch (e) {
+        // The far shell never got its last hook, so the chain isn't one.
+        if (this.top === chain) this.chains.pop();
+        throw e;
+      }
       const drawn = await this.until(deadline, () => (!this.chains.includes(chain) || by() ? false : this.top === chain && this.prompted ? true : undefined), opts.signal);
       if (!drawn) return { kind: 'incomplete', step: 'hooks', by: by() ?? (this.chains.includes(chain) ? 'timeout' : 'exited'), front: this.front() };
       const p = this.probe!;
