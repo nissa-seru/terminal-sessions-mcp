@@ -2820,6 +2820,24 @@ test("a no-break space typed at the prompt is pending, so run refuses, while ord
   await s.close({ force: true, deadline: by() });
 });
 
+test("probe: text typed to match the prompt's line at rest, then Ctrl-A", { skip: which('zsh') ? false : 'zsh is needed' }, async (t) => {
+  const s = await open(which('zsh')!, { rc: "RPROMPT='RIGHT-SIDE'\n" });
+  await eventually('the right prompt is drawn', () => s.lines(0).lines.some((l) => l.includes('RIGHT-SIDE')));
+  const f0 = s.front();
+  const top = (s as unknown as { chains: Array<{ rest?: { text: string } }> }).chains.at(-1)!;
+  const rest = top.rest?.text ?? '';
+  t.diagnostic(`front ${JSON.stringify(f0)} rest ${JSON.stringify(rest)}`);
+  await s.send(rest, { waitMs: 2000, quietMs: 300 });
+  t.diagnostic(`after typing: ${JSON.stringify(s.front())} line ${JSON.stringify(s.lines(0).lines.at(-1))}`);
+  await s.send('', { waitMs: 2000, keys: ['C-a'], quietMs: 300 });
+  const f = s.front();
+  t.diagnostic(`after C-a: ${JSON.stringify(f)} line ${JSON.stringify(s.lines(0).lines.at(-1))}`);
+  const r = await s.run('echo PROBE_RAN', { waitMs: 3000 });
+  t.diagnostic(`run: ${JSON.stringify(r).slice(0, 400)}`);
+  t.diagnostic(`screen: ${JSON.stringify(s.lines(0).lines.slice(-4))}`);
+  await s.close({ force: true, deadline: by() });
+});
+
 test('text on the prompt\'s line past the cursor is pending too, so run refuses until the line is cleared', { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open(which('bash')!);
   await s.send('echo UNWANTED', { waitMs: 2000, quietMs: 100 });
