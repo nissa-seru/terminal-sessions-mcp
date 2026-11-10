@@ -2316,6 +2316,61 @@ test('a close that fails leaves none under way, so the next close starts again a
   assert.equal(s.front().state, 'exited');
 });
 
+/** A close whose deadline throws as it's read, so it fails before it signals anything. */
+const failingClose = (): { deadline: number } => ({
+  get deadline(): number {
+    throw new Error('refused');
+  },
+});
+
+test('after a close that fails before it signals, input stays blocked, and a wait for the running command still sees it end', async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const gate = newGate();
+  fs.writeFileSync(gate, '');
+  const from = s.lines(0).to - 1;
+  const r = await s.run(holdJob(gate), { waitMs: 200 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  await assert.rejects(s.close(failingClose()), /refused/);
+  assert.equal((await s.run('echo no', { waitMs: 300 })).kind, 'refused');
+  const ending = s.wait({ kind: 'end' }, { waitMs: 10_000, from });
+  fs.rmSync(gate);
+  const w = await ending;
+  assert.equal(w.by, 'end', JSON.stringify(w));
+});
+
+test('after a close that fails before it signals, the session goes on looking while a command runs, so its wait for input is reported', { skip: !proc.READS_VISIBLE ? 'only Linux on x64, arm64, riscv64 and loong64 shows reads' : false }, async () => {
+  const s = await open(which('bash') ?? '/bin/bash');
+  const gate = newGate();
+  fs.writeFileSync(gate, '');
+  const r = await s.run(`${holdJob(gate)}; head -n 1 >/dev/null`, { waitMs: 200 });
+  assert.equal(r.kind, 'running', JSON.stringify(r));
+  await assert.rejects(s.close(failingClose()), /refused/);
+  const events: SessionEvent[] = [];
+  s.onEvent((e) => events.push(e));
+  fs.rmSync(gate);
+  await eventually('a wait for input is reported', () => events.some((e) => e.kind === 'waiting'));
+});
+
+test("a transcript whose terminal throws as it's disposed still lets go of a wait for it to settle", async () => {
+  const s = await open('/bin/sh');
+  const t = (s as unknown as { t: { write(d: string, parsed: () => void): void; settled(): Promise<void>; dispose(): void; term: { dispose(): void }; settledWaiters: unknown[] } }).t;
+  const real = t.term.dispose.bind(t.term);
+  t.term.dispose = () => {
+    real();
+    throw new Error('refused');
+  };
+  try {
+    t.write('x'.repeat(100_000), () => {});
+    let settled = false;
+    void t.settled().then(() => (settled = true));
+    assert.ok(t.settledWaiters.length > 0, 'a wait for the transcript to settle is pending');
+    assert.throws(() => t.dispose(), /refused/);
+    await eventually('the wait settles', () => settled, 2000);
+  } finally {
+    t.term.dispose = () => {};
+  }
+});
+
 test("a command whose command file can't be removed still ends with its status, and the failed removal is logged", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const logs: string[] = [];
   const s = await open(which('bash')!, { log: (l) => logs.push(l) });
