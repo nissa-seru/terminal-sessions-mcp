@@ -958,6 +958,12 @@ test("run's output past its budget keeps its start and end, and says where the g
     }
 });
 
+test("output joins the pieces of one long line with no line break, and its left-out count is the command's own characters", () => {
+  assert.equal(outputValue(['ab', 'cd', 'ef'], 100, [1]).output, 'abcd\nef');
+  const v = outputValue(['x'.repeat(60), 'y'.repeat(40)], 30, [1]);
+  assert.equal(v.output.length + v.outputLeftOut!.characters, 100);
+});
+
 test("the host says what the session reports of a match on the screen, an undelivered signal, an unlisted or unseen close, a timed-out search's long lines, unknown echo and a command's duration", async () => {
   const { host, opened } = setup();
   const wakes: Wake[] = [];
@@ -982,6 +988,14 @@ test("the host says what the session reports of a match on the screen, an undeli
   assert.ok(wakes.some((w) => w.tag === 'terminal:ended' && / · exit 0 · 1\.2 s · /.test(w.text)), "the duration is the ending's own");
   s.close = async () => ({ code: null, signal: 'SIGKILL', unconfirmed: true, unlisted: true });
   assert.equal((await host.call(agent(), 'close', { name: 'main', force: true })).text, "[main · closed]\nThe shell was sent SIGKILL, and its exit wasn't seen within the grace after it. The session couldn't list every process it started, so jobs it started may live on.");
+});
+
+test("a close that couldn't send the shell any signal doesn't say one was sent", async () => {
+  const { host, opened } = setup();
+  await host.call(agent(), 'open', { name: 'main' });
+  const s = opened.at(-1)!;
+  s.close = async () => ({ code: null, unconfirmed: true });
+  assert.equal((await host.call(agent(), 'close', { name: 'main' })).text, "[main · closed]\nThe shell couldn't be sent a signal, and its exit wasn't seen.");
 });
 
 test('a search the wait ended before it reached the end says how many lines it never searched, and what searches them', async () => {
