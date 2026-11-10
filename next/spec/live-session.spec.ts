@@ -789,6 +789,8 @@ for (const sh of shells) {
       const s = await open(shell);
       await s.send('exec /bin/sh\r', { waitMs: 3000, quietMs: 300 });
       await eventually('sh replaced the shell', () => /^(\/bin\/)?sh\b/.test(proc.argv(s.pid) ?? ''));
+      // With no marks, its prompt is known once it reads the terminal after a quiet spell.
+      await eventually("sh's prompt is in front", () => s.front().state === 'prompt');
       const after = await s.run('echo after-exec', { waitMs: 8000 });
       assert.equal(after.kind, 'ended', JSON.stringify(after));
       if (after.kind === 'ended') assert.deepEqual(out(s, after.command), ['after-exec']);
