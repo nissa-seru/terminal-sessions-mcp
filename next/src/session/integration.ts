@@ -77,7 +77,7 @@ __tsm_b='\\[\\033]133;B;$\{__tsm_c}.$\{__tsm_r}\\007\\]'
 __tsm_hook() {
   local __tsm_pc
   case $\{PS1-} in *'133;B;'*) ;; *) PS1="$\{PS1-}$__tsm_b" ;; esac
-  if [ "$\{#PROMPT_COMMAND[@]}" -gt 1 ]; then
+  if [ -n "$\{PROMPT_COMMAND+x}" ] && [ "$\{#PROMPT_COMMAND[@]}" -gt 1 ]; then
     case $\{PROMPT_COMMAND[0]} in __tsm_end$'\\n'*) ;; *) PROMPT_COMMAND[0]=__tsm_end$'\\n'"$\{PROMPT_COMMAND[0]}" ;; esac
     case $\{PROMPT_COMMAND[$\{#PROMPT_COMMAND[@]}-1]} in __tsm_tail) ;; *) PROMPT_COMMAND+=(__tsm_tail) ;; esac
   else
