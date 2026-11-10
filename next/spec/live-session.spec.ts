@@ -1294,6 +1294,26 @@ for (const sh of shells) {
       assert.equal(text.slice(65_526, 65_546), '[redacted]..........');
     });
 
+    test('PROBE61 the nonce-cut command, 60 times', { timeout: 900_000 }, async () => {
+      const bad: string[] = [];
+      for (let i = 0; i < 60; i++) {
+        const s = await open(shell);
+        const c = await ran(s, `head -c 65526 /dev/zero | tr '\\0' 1; printf %s "$__tsm_r"; head -c 70000 /dev/zero | tr '\\0' 1; echo`, 30_000);
+        const ls = out(s, c);
+        const text = ls.join('');
+        const pl = s.lines(c.from - 1, c.from).lines[0] ?? '';
+        console.log(`PROBE61 ${i} from=${c.from} to=${c.to} promptLine=${pl.length} n=${ls.length} lens=${ls.map((l) => l.length).join(',')} total=${text.length}`);
+        if (text.length !== 135_546 || text.slice(65_526, 65_546) !== '[redacted]..........') {
+          bad.push(String(i));
+          const around = s.lines(Math.max(0, c.from - 2), (c.to ?? c.from) + 2);
+          around.lines.forEach((l, k) => console.log(`PROBE61 ${i} line ${around.from + k} len=${l.length} head=${JSON.stringify(l.slice(0, 110))} tail=${JSON.stringify(l.slice(-110))}`));
+        }
+        await s.close({ force: true, deadline: by() });
+        sessions.splice(sessions.indexOf(s), 1);
+      }
+      assert.deepEqual(bad, []);
+    });
+
     test('the live nonce whose head crosses a 64 Ki cut at the end of a freeze never shows, and no line changes as it freezes', { skip: sh.name !== 'bash' ? 'the transcript is the same in every shell' : false }, async () => {
       // At 21 columns a row ends at 65,541 = 3,121 × 21 characters: a cut at 65,536, then 5 more. The
       // nonce starts 8 characters before that row's end, so its head crosses the cut and its tail starts
