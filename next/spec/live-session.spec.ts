@@ -2350,6 +2350,54 @@ test("a local shell given the integration stays followed while a job it started 
   await s.close({ force: true, deadline: by() });
 });
 
+test("a far shell reached in the same group as the local shell before it is no longer followed once its own carrier ends, while that local shell stays followed", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open('/bin/sh');
+  const capture = path.join(tmp, `capture-${++gates}`);
+  const w = await localFar(s);
+  const chains = (s as unknown as { chains: unknown[] }).chains;
+  const local = chains.length;
+  // Without job control the local bash runs script in its own group, then cat in that same group.
+  await ran(s, 'set +m');
+  const from = s.lines(0).to - 1;
+  assert.equal((await s.run(`${relayed(which('bash')!)}; cat > "${capture}"`, { waitMs: 200 })).kind, 'running');
+  assert.equal((await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from })).by, 'match');
+  assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+  assert.equal(chains.length, local + 1);
+  const carrier = (proc.descendants(s.pid, true) ?? []).find((d) => d.pgrp === w && /^\S*script /.test(proc.argv(d.pid) ?? ''));
+  assert.ok(w > 0 && carrier, JSON.stringify({ w, carrier }));
+  process.kill(carrier!.pid, 'SIGKILL');
+  await eventually('cat holds the local bash group', () => (proc.descendants(s.pid, true) ?? []).some((d) => d.pgrp === w && /^cat\b/.test(proc.argv(d.pid) ?? '')));
+  const f = s.front();
+  assert.ok(f.state !== 'prompt', JSON.stringify(f));
+  assert.equal(chains.length, local, 'the local bash is still followed');
+  assert.equal((await s.run('echo MUST_NOT_REACH_CAT', { waitMs: 300 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+  assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
+});
+
+test("a far shell reached in the session shell's own group is no longer followed once its own carrier ends", { skip: which('bash') ? false : 'bash is needed' }, async () => {
+  const s = await open(which('bash')!);
+  const capture = path.join(tmp, `capture-${++gates}`);
+  const chains = (s as unknown as { chains: unknown[] }).chains;
+  const base = chains.length;
+  // Without job control the session's bash runs script in its own group, then cat in that same group.
+  await ran(s, 'set +m');
+  const from = s.lines(0).to - 1;
+  assert.equal((await s.run(`${relayed(which('bash')!)}; cat > "${capture}"`, { waitMs: 200 })).kind, 'running');
+  assert.equal((await s.wait({ kind: 'match', pattern: /^far> ?$/ }, { waitMs: 10_000, from })).by, 'match');
+  assert.equal((await s.integrate({ waitMs: 10_000 })).kind, 'integrated');
+  const carrier = (proc.descendants(s.pid, true) ?? []).find((d) => d.pgrp === s.pid && /^\S*script /.test(proc.argv(d.pid) ?? ''));
+  assert.ok(carrier, JSON.stringify(proc.descendants(s.pid, true)));
+  process.kill(carrier!.pid, 'SIGKILL');
+  await eventually("cat holds the session shell's group", () => (proc.descendants(s.pid, true) ?? []).some((d) => d.pgrp === s.pid && /^cat\b/.test(proc.argv(d.pid) ?? '')));
+  const f = s.front();
+  assert.ok(f.state !== 'prompt', JSON.stringify(f));
+  assert.equal(chains.length, base);
+  assert.equal((await s.run('echo MUST_NOT_REACH_CAT', { waitMs: 300 })).kind, 'refused');
+  await s.close({ force: true, deadline: by() });
+  assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
+});
+
 /** A local bash given the integration in `s`, at its prompt; returns its group. */
 async function localFar(s: Session): Promise<number> {
   const from = s.lines(0).to - 1;
