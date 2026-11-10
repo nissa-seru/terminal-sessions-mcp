@@ -2398,6 +2398,35 @@ test("a far shell reached in the session shell's own group is no longer followed
   assert.doesNotMatch(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', /MUST_NOT_REACH_CAT|__tsm/);
 });
 
+test('an integrate whose carrier ends while it waits for a hook to run stops as exited, naming that program, and types nothing more', async () => {
+  const s = await open('/bin/sh');
+  const capture = path.join(tmp, `capture-${++gates}`);
+  const gate = newGate();
+  const read = path.join(tmp, `read-${++gates}`);
+  fs.writeFileSync(gate, '');
+  // A stand-in far shell: it answers the probe as bash, reads the first hook piece, and holds until the gate goes.
+  const fake = path.join(tmp, `fake-far-${++gates}`);
+  fs.writeFileSync(
+    fake,
+    `#!/bin/sh\nIFS= read -r line\ncall=$(printf '%s\\n' "$line" | sed -n 's/.*133;K;\\([0-9]*\\);.*/\\1/p')\nprintf '\\033]133;K;%s;;;5.2.0(1)-release\\007' "$call"\nIFS= read -r piece\n: > '${read}'\nwhile [ -e '${gate}' ]; do sleep 0.05; done\n`,
+    { mode: 0o755 },
+  );
+  const carrierCommand = process.platform === 'darwin' ? `script -q /dev/null ${fake}` : `script -qfc ${fake} /dev/null`;
+  // Without job control, sh -c runs script in its own group, then cat in that same group.
+  assert.equal((await s.run(`sh -c '${carrierCommand}; exec cat > "${capture}"'`, { waitMs: 200 })).kind, 'running');
+  await inFront(s, /script/);
+  const pts = (s as unknown as { pts: string }).pts;
+  await eventually('script holds the terminal out of canonical mode', () => proc.modes(pts)?.canonical === false);
+  const integrating = s.integrate({ waitMs: 10_000 });
+  await eventually('the stand-in read the first hook piece', () => fs.existsSync(read));
+  fs.rmSync(gate);
+  const r = await integrating;
+  assert.deepEqual([r.kind, r.kind === 'incomplete' && r.step, r.kind === 'incomplete' && r.by], ['incomplete', 'hooks', 'exited'], JSON.stringify(r));
+  assert.match((r.kind === 'incomplete' && r.ended) || '', /^\S*script /, JSON.stringify(r));
+  await s.close({ force: true, deadline: by() });
+  assert.equal(fs.existsSync(capture) ? fs.readFileSync(capture, 'utf8') : '', '');
+});
+
 /** A local bash given the integration in `s`, at its prompt; returns its group. */
 async function localFar(s: Session): Promise<number> {
   const from = s.lines(0).to - 1;
