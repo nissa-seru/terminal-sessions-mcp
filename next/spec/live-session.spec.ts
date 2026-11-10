@@ -2912,6 +2912,18 @@ test("text a line editor draws on the prompt's line with the cursor after it isn
   await s.close({ force: true, deadline: by() });
 });
 
+test("text sent at the prompt stays pending, so run refuses, until the prompt's line or the cursor changes, though output that draws nothing there is parsed", { skip: which('zsh') ? false : 'zsh is needed' }, async () => {
+  const s = await open(which('zsh')!);
+  await ran(s, "__titled() { print -n '\\e]0;TITLED\\a' }; zle -N __titled; bindkey Q __titled");
+  await s.send('Q', { waitMs: 2000, quietMs: 200 });
+  await eventually('the title the key set is parsed', () => s.screen().title === 'TITLED');
+  await pendingIs(s, 'Q');
+  assert.equal((await s.run('echo x', { waitMs: 2000 })).kind, 'refused');
+  await s.send('', { waitMs: 2000, keys: ['C-c'], quietMs: 200 });
+  assert.deepEqual(out(s, await ran(s, 'echo after')), ['after']);
+  await s.close({ force: true, deadline: by() });
+});
+
 test("output a job prints onto the prompt's line, with the cursor after it, isn't taken for the prompt's own, so run refuses", { skip: which('bash') ? false : 'bash is needed' }, async () => {
   const s = await open(which('bash')!);
   const gate = path.join(tmp, `gate-${++gates}`);
